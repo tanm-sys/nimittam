@@ -1,17 +1,9 @@
 /*
- * Copyright 2025-2026 Google LLC
+ * Copyright 2025 Tanmay Patil
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 package com.google.ai.edge.gallery.performance
@@ -62,7 +54,6 @@ private const val FRAME_TIME_CRITICAL_THRESHOLD = 33.33f // ~30fps
 
 /**
  * Frame timing metrics.
- *
  * @property frameTimeMs Time to render frame in milliseconds
  * @property isJank Whether this frame missed the deadline
  * @property timestamp When the frame was rendered
@@ -84,7 +75,6 @@ data class FrameMetrics(
 
 /**
  * Memory usage metrics.
- *
  * @property heapSize Total heap size in MB
  * @property heapUsed Used heap in MB
  * @property nativeHeap Native heap in MB
@@ -103,7 +93,6 @@ data class MemoryMetrics(
 
 /**
  * ANR (Application Not Responding) information.
- *
  * @property threadName Name of the thread that was blocked
  * @property blockedDurationMs How long the thread was blocked
  * @property stackTrace Stack trace at the time of detection
@@ -118,7 +107,6 @@ data class AnrInfo(
 
 /**
  * Performance snapshot containing all metrics at a point in time.
- *
  * @property timestamp When the snapshot was taken
  * @property averageFrameTime Average frame time over the window
  * @property jankRate Percentage of frames that were janky
@@ -135,7 +123,6 @@ data class PerformanceSnapshot(
 
 /**
  * Performance report for analytics/logging.
- *
  * @property sessionDurationMs Duration of the monitoring session
  * @property totalFrames Total frames rendered
  * @property jankFrames Number of janky frames
@@ -168,14 +155,12 @@ interface PerformanceListener {
 
 /**
  * Real User Monitoring (RUM) performance monitor.
- *
  * Tracks:
  * - Frame times and jank detection
  * - Memory usage over time
  * - ANR detection
  * - CPU usage
  * - Custom performance metrics
- *
  * All data is kept local (privacy-first) with optional export.
  */
 @Singleton

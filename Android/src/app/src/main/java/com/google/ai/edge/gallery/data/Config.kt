@@ -1,17 +1,9 @@
 /*
- * Copyright 2025 Google LLC
+ * Copyright 2025 Tanmay Patil
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 package com.google.ai.edge.gallery.data
@@ -20,7 +12,6 @@ import kotlin.math.abs
 
 /**
  * The types of configuration editors available.
- *
  * This enum defines the different UI components used to edit configuration values. Each type
  * corresponds to a specific editor widget, such as a slider or a switch.
  */
@@ -49,7 +40,6 @@ object ConfigKeys {
 
 /**
  * Base class for configuration settings.
- *
  * @param type The type of configuration editor.
  * @param key The unique key for the configuration setting.
  * @param defaultValue The default value for the configuration setting.
@@ -78,7 +68,6 @@ class LabelConfig(override val key: ConfigKey, override val defaultValue: String
 
 /**
  * Configuration setting for a number slider.
- *
  * @param sliderMin The minimum value of the slider.
  * @param sliderMax The maximum value of the slider.
  */

@@ -229,7 +229,7 @@ Data Layer
 1. **Multi-Backend Support:** Vulkan, OpenCL, CPU, NPU (QNN)
 2. **Performance Optimization:** Kernel fusion and memory planning
 3. **Quantization:** 4-bit and 8-bit support for size reduction
-4. **License Compatibility:** Apache 2.0 license
+4. **License Compatibility:** MLC-LLM's Apache 2.0 license is compatible with our MPL-2.0 license
 
 **Alternatives Considered:**
 - llama.cpp: Limited GPU support on Android

@@ -24,7 +24,7 @@ Having decided on on-device inference (ADR-001), we need to select a framework f
 ### Options Considered
 
 1. **MLC-LLM (Apache TVM)**
-   - Pros: Multi-backend, quantization, Apache 2.0 license, active development
+   - Pros: Multi-backend, quantization, compatible license (Apache 2.0), active development
    - Cons: JNI complexity, build system complexity
 
 2. **llama.cpp**
@@ -53,7 +53,7 @@ Having decided on on-device inference (ADR-001), we need to select a framework f
 
 4. **Streaming**: Native support for streaming token generation via callback mechanisms.
 
-5. **License**: Apache 2.0 license is compatible with our distribution requirements.
+5. **License**: MLC-LLM's Apache 2.0 license is compatible with our MPL-2.0 license.
 
 ## Consequences
 
