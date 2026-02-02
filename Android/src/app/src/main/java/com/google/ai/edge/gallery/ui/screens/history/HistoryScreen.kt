@@ -42,27 +42,35 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.theme.AnimationDuration
 import com.google.ai.edge.gallery.ui.theme.Gray12
@@ -74,6 +82,11 @@ import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
+import com.google.ai.edge.gallery.ui.viewmodels.ConversationCategory
+import com.google.ai.edge.gallery.ui.viewmodels.ConversationUiModel
+import com.google.ai.edge.gallery.ui.viewmodels.HistoryEvent
+import com.google.ai.edge.gallery.ui.viewmodels.HistoryViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -87,62 +100,39 @@ import java.util.Locale
  * Empty state with geometric illustration
  */
 
-data class ConversationItem(
-    val id: String,
-    val title: String,
-    val preview: String,
-    val timestamp: Long,
-    val category: ConversationCategory
-)
-
-enum class ConversationCategory(val borderColor: androidx.compose.ui.graphics.Color) {
-    GENERAL(PureWhite),
-    WORK(Gray80),
-    CREATIVE(Gray64),
-    CODE(Gray40)
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     onNavigateBack: () -> Unit = {},
     onNewChat: () -> Unit = {},
-    onConversationClick: (String) -> Unit = {}
+    onConversationClick: (String) -> Unit = {},
+    viewModel: HistoryViewModel = hiltViewModel()
 ) {
-    val conversations = remember {
-        mutableStateListOf(
-            ConversationItem(
-                id = "1",
-                title = "Project Ideas",
-                preview = "Let's brainstorm some innovative app concepts for the healthcare sector...",
-                timestamp = System.currentTimeMillis() - 3600000,
-                category = ConversationCategory.WORK
-            ),
-            ConversationItem(
-                id = "2",
-                title = "Creative Writing",
-                preview = "Help me write a short story about a detective in a cyberpunk city...",
-                timestamp = System.currentTimeMillis() - 86400000,
-                category = ConversationCategory.CREATIVE
-            ),
-            ConversationItem(
-                id = "3",
-                title = "Kotlin Code Review",
-                preview = "Can you review this function and suggest improvements?",
-                timestamp = System.currentTimeMillis() - 172800000,
-                category = ConversationCategory.CODE
-            ),
-            ConversationItem(
-                id = "4",
-                title = "General Chat",
-                preview = "Tell me about the history of artificial intelligence...",
-                timestamp = System.currentTimeMillis() - 259200000,
-                category = ConversationCategory.GENERAL
-            )
-        )
-    }
-
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val hapticFeedback = LocalHapticFeedback.current
+    val snackbarHostState = remember { SnackbarHostState() }
     var showContent by remember { mutableStateOf(false) }
+    var conversationToDelete by remember { mutableStateOf<String?>(null) }
+
+    // Handle events from ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.events.collectLatest { event ->
+            when (event) {
+                is HistoryEvent.NavigateBack -> onNavigateBack()
+                is HistoryEvent.NavigateToNewChat -> onNewChat()
+                is HistoryEvent.NavigateToConversation -> onConversationClick(event.conversationId)
+                is HistoryEvent.ShowError -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+                is HistoryEvent.ShowSuccess -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+                is HistoryEvent.ConfirmDelete -> {
+                    conversationToDelete = event.conversationId
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         delay(100)
@@ -165,12 +155,14 @@ fun HistoryScreen(
         ) {
             // Header
             HistoryHeader(
-                onNavigateBack = onNavigateBack,
-                onNewChat = onNewChat
+                onNavigateBack = { viewModel.navigateBack() },
+                onNewChat = { viewModel.createNewChat() }
             )
 
             // Content
-            if (conversations.isEmpty()) {
+            if (uiState.isLoading) {
+                LoadingState()
+            } else if (uiState.isEmpty) {
                 EmptyHistoryState()
             } else {
                 LazyColumn(
@@ -178,7 +170,7 @@ fun HistoryScreen(
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(
-                        items = conversations,
+                        items = uiState.filteredConversations,
                         key = { it.id }
                     ) { conversation ->
                         AnimatedVisibility(
@@ -196,14 +188,60 @@ fun HistoryScreen(
                         ) {
                             SwipeableConversationItem(
                                 conversation = conversation,
-                                onClick = { onConversationClick(conversation.id) },
-                                onDelete = { conversations.remove(conversation) }
+                                onClick = { viewModel.selectConversation(conversation.id) },
+                                onDelete = { viewModel.requestDeleteConversation(conversation.id) }
                             )
                         }
                     }
                 }
             }
         }
+
+        // Snackbar
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        // Delete Confirmation Dialog
+        conversationToDelete?.let { conversationId ->
+            AlertDialog(
+                onDismissRequest = { conversationToDelete = null },
+                title = { Text("Delete Conversation") },
+                text = { Text("This conversation will be permanently deleted. This action cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteConversation(conversationId)
+                            conversationToDelete = null
+                        }
+                    ) {
+                        Text("Delete", color = androidx.compose.ui.graphics.Color.Red)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { conversationToDelete = null }) {
+                        Text("Cancel")
+                    }
+                },
+                containerColor = Gray12,
+                titleContentColor = PureWhite,
+                textContentColor = Gray80
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadingState() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            color = PureWhite,
+            strokeWidth = 2.dp
+        )
     }
 }
 
@@ -212,6 +250,8 @@ private fun HistoryHeader(
     onNavigateBack: () -> Unit,
     onNewChat: () -> Unit
 ) {
+    val hapticFeedback = LocalHapticFeedback.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -220,7 +260,13 @@ private fun HistoryHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onNavigateBack) {
+            IconButton(
+                onClick = {
+                    // Haptic feedback for navigation back (confirmation)
+                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onNavigateBack()
+                }
+            ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
@@ -238,7 +284,11 @@ private fun HistoryHeader(
         }
 
         IconButton(
-            onClick = onNewChat,
+            onClick = {
+                // Haptic feedback for new chat (impact)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                onNewChat()
+            },
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(12.dp))
@@ -256,13 +306,16 @@ private fun HistoryHeader(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeableConversationItem(
-    conversation: ConversationItem,
+    conversation: ConversationUiModel,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val hapticFeedback = LocalHapticFeedback.current
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
+                // Haptic feedback for delete action (warning)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                 onDelete()
                 true
             } else {
@@ -270,6 +323,14 @@ private fun SwipeableConversationItem(
             }
         }
     )
+
+    // Trigger haptic when swipe threshold is reached
+    LaunchedEffect(dismissState.currentValue) {
+        if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
+            // Haptic feedback for swipe action (impact)
+            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
 
     SwipeToDismissBox(
         state = dismissState,
@@ -291,7 +352,8 @@ private fun SwipeableConversationItem(
         content = {
             ConversationListItem(
                 conversation = conversation,
-                onClick = onClick
+                onClick = onClick,
+                hapticFeedback = hapticFeedback
             )
         }
     )
@@ -299,8 +361,9 @@ private fun SwipeableConversationItem(
 
 @Composable
 private fun ConversationListItem(
-    conversation: ConversationItem,
-    onClick: () -> Unit
+    conversation: ConversationUiModel,
+    onClick: () -> Unit,
+    hapticFeedback: androidx.compose.ui.hapticfeedback.HapticFeedback
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
@@ -309,7 +372,11 @@ private fun ConversationListItem(
         modifier = Modifier
             .fillMaxWidth()
             .height(88.dp)
-            .clickable(onClick = onClick)
+            .clickable {
+                // Haptic feedback for conversation selection (selection)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -318,7 +385,7 @@ private fun ConversationListItem(
             modifier = Modifier
                 .width(3.dp)
                 .height(48.dp)
-                .background(conversation.category.borderColor)
+                .background(getCategoryColor(conversation.category))
         )
 
         Spacer(modifier = Modifier.width(16.dp))
@@ -358,6 +425,16 @@ private fun ConversationListItem(
                 overflow = TextOverflow.Ellipsis
             )
         }
+    }
+}
+
+@Composable
+private fun getCategoryColor(category: ConversationCategory): androidx.compose.ui.graphics.Color {
+    return when (category) {
+        ConversationCategory.GENERAL -> PureWhite
+        ConversationCategory.WORK -> Gray80
+        ConversationCategory.CREATIVE -> Gray64
+        ConversationCategory.CODE -> Gray40
     }
 }
 

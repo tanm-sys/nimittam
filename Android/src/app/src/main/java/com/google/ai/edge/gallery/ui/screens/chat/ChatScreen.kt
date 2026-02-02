@@ -54,26 +54,29 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.components.OfflineStatusWaveform
 import androidx.compose.ui.draw.rotate
@@ -97,7 +100,10 @@ import com.google.ai.edge.gallery.ui.theme.Obsidian
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
 import com.google.ai.edge.gallery.ui.theme.UserMessageShape
-import kotlinx.coroutines.delay
+import com.google.ai.edge.gallery.ui.viewmodels.ChatEvent
+import com.google.ai.edge.gallery.ui.viewmodels.ChatMessageUiModel
+import com.google.ai.edge.gallery.ui.viewmodels.ChatViewModel
+import kotlinx.coroutines.flow.collectLatest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -111,44 +117,42 @@ import java.util.Locale
  * Offline status bar: 32dp height, animated waveform (DeepMind style)
  */
 
-data class ChatMessage(
-    val id: String,
-    val content: String,
-    val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis(),
-    val isComplete: Boolean = true
-)
-
 @Composable
 fun ChatScreen(
     onNavigateToHistory: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
-    onNavigateToVoice: () -> Unit = {}
+    onNavigateToVoice: () -> Unit = {},
+    viewModel: ChatViewModel = hiltViewModel()
 ) {
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage("1", "Hello! I'm Nimittam, your offline AI assistant. How can I help you today?", false)
-        )
-    }
-    var inputText by remember { mutableStateOf("") }
-    var isInputFocused by remember { mutableStateOf(false) }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val hapticFeedback = LocalHapticFeedback.current
+
+    // Handle events from ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.events.collectLatest { event ->
+            when (event) {
+                is ChatEvent.ScrollToBottom -> {
+                    if (uiState.messages.isNotEmpty()) {
+                        listState.animateScrollToItem(uiState.messages.size - 1)
+                    }
+                }
+                is ChatEvent.ShowError -> {
+                    // Error is shown via Snackbar
+                }
+                else -> {}
+            }
+        }
+    }
 
     // Auto-scroll to bottom when new messages arrive
-    // OPTIMIZATION: Use instant scroll for rapid updates to prevent UI blocking
-    // during streaming responses. Only animate for the final message or when
-    // updates are spaced apart by more than 100ms.
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            val lastIndex = messages.size - 1
+    LaunchedEffect(uiState.messages.size) {
+        if (uiState.messages.isNotEmpty()) {
+            val lastIndex = uiState.messages.size - 1
+            val lastMessage = uiState.messages.lastOrNull()
             
             // Check if this is a rapid update (streaming scenario)
-            val isRapidUpdate = messages.size > 1 && run {
-                val lastMsg = messages[lastIndex]
-                val prevMsg = messages[lastIndex - 1]
-                // If messages arrived within 100ms, use instant scroll
-                lastMsg.timestamp - prevMsg.timestamp < 100
-            }
+            val isRapidUpdate = uiState.messages.size > 1 && lastMessage?.isComplete == false
             
             if (isRapidUpdate) {
                 // Use instant scroll for streaming to avoid animation overhead
@@ -179,7 +183,7 @@ fun ChatScreen(
         ) {
             // Header
             ChatHeader(
-                modelName = "Nimittam Lite",
+                modelName = uiState.modelName,
                 onHistoryClick = onNavigateToHistory,
                 onSettingsClick = onNavigateToSettings
             )
@@ -196,35 +200,63 @@ fun ChatScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)
             ) {
-                items(messages, key = { it.id }) { message ->
+                items(uiState.messages, key = { it.id }) { message ->
                     ChatMessageItem(message = message)
+                }
+            }
+
+            // Error message
+            uiState.errorMessage?.let { error ->
+                Snackbar(
+                    modifier = Modifier.padding(16.dp),
+                    action = {
+                        TextButton(onClick = { viewModel.retryLastMessage() }) {
+                            Text("Retry", color = PureWhite)
+                        }
+                    }
+                ) {
+                    Text(error)
                 }
             }
 
             // Input composer
             ChatInputComposer(
-                value = inputText,
-                onValueChange = { inputText = it },
-                isFocused = isInputFocused,
-                onFocusChange = { isInputFocused = it },
+                value = uiState.inputText,
+                onValueChange = { viewModel.updateInputText(it) },
+                isFocused = false,
+                onFocusChange = { },
                 onSend = {
-                    if (inputText.isNotBlank()) {
-                        messages.add(ChatMessage(
-                            id = System.currentTimeMillis().toString(),
-                            content = inputText,
-                            isUser = true
-                        ))
-                        inputText = ""
-
-                        // Simulate AI response
-                        // In real app, this would call the LLM engine
+                    if (uiState.inputText.isNotBlank()) {
+                        // Haptic feedback for sending message (impact)
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.sendMessage()
                     }
                 },
-                onVoiceClick = onNavigateToVoice
+                onVoiceClick = {
+                    // Haptic feedback for voice input activation (impact)
+                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onNavigateToVoice()
+                },
+                isGenerating = uiState.isGenerating,
+                hapticFeedback = hapticFeedback
             )
 
             Spacer(modifier = Modifier.height(8.dp))
         }
+    }
+}
+
+@Composable
+private fun TextButton(
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        content()
     }
 }
 
@@ -234,6 +266,8 @@ private fun ChatHeader(
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
+    val hapticFeedback = LocalHapticFeedback.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -242,7 +276,13 @@ private fun ChatHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Left: History button
-        IconButton(onClick = onHistoryClick) {
+        IconButton(
+            onClick = {
+                // Haptic feedback for navigation (confirmation)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onHistoryClick()
+            }
+        ) {
             Icon(
                 imageVector = Icons.Default.History,
                 contentDescription = "History",
@@ -277,7 +317,13 @@ private fun ChatHeader(
         }
 
         // Right: Settings button
-        IconButton(onClick = onSettingsClick) {
+        IconButton(
+            onClick = {
+                // Haptic feedback for navigation (confirmation)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onSettingsClick()
+            }
+        ) {
             Icon(
                 imageVector = Icons.Default.Settings,
                 contentDescription = "Settings",
@@ -389,7 +435,7 @@ private fun OfflineStatusBar() {
 }
 
 @Composable
-private fun ChatMessageItem(message: ChatMessage) {
+private fun ChatMessageItem(message: ChatMessageUiModel) {
     val shape = if (message.isUser) UserMessageShape else AiMessageShape
     val backgroundColor = if (message.isUser) Obsidian else PureBlack
     val borderColor = if (message.isUser) Gray24 else Gray12
@@ -449,7 +495,9 @@ private fun ChatInputComposer(
     isFocused: Boolean,
     onFocusChange: (Boolean) -> Unit,
     onSend: () -> Unit,
-    onVoiceClick: () -> Unit
+    onVoiceClick: () -> Unit,
+    isGenerating: Boolean,
+    hapticFeedback: androidx.compose.ui.hapticfeedback.HapticFeedback
 ) {
     val shape = if (isFocused || value.isNotEmpty()) {
         InputComposerExpandedShape
@@ -490,11 +538,12 @@ private fun ChatInputComposer(
                     fontWeight = FontWeight.Normal
                 ),
                 cursorBrush = SolidColor(PureWhite),
+                enabled = !isGenerating,
                 decorationBox = { innerTextField ->
                     Box {
                         if (value.isEmpty()) {
                             Text(
-                                text = "Message Nimittam...",
+                                text = if (isGenerating) "Generating..." else "Message Nimittam...",
                                 color = Gray40,
                                 style = MaterialTheme.typography.bodyLarge
                             )
@@ -508,28 +557,37 @@ private fun ChatInputComposer(
 
             // Voice or Send button
             AnimatedContent(
-                targetState = value.isNotEmpty(),
+                targetState = value.isNotEmpty() || isGenerating,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(200)) togetherWith
                             fadeOut(animationSpec = tween(200))
                 },
                 label = "input_action"
-            ) { hasText ->
-                if (hasText) {
-                    // Send button
-                    IconButton(
-                        onClick = onSend,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(PureWhite)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
-                            tint = PureBlack,
-                            modifier = Modifier.size(20.dp)
+            ) { hasTextOrGenerating ->
+                if (hasTextOrGenerating) {
+                    if (isGenerating) {
+                        // Loading indicator
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(40.dp),
+                            color = PureWhite,
+                            strokeWidth = 2.dp
                         )
+                    } else {
+                        // Send button
+                        IconButton(
+                            onClick = onSend,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(PureWhite)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Send",
+                                tint = PureBlack,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 } else {
                     // Voice button

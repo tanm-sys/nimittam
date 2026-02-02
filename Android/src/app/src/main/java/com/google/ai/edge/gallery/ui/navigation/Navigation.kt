@@ -22,7 +22,7 @@ import com.google.ai.edge.gallery.ui.screens.capability.ModelCapabilityScreen
 import com.google.ai.edge.gallery.ui.screens.capability.ProcessingStage
 import com.google.ai.edge.gallery.ui.screens.chat.ChatScreen
 import com.google.ai.edge.gallery.ui.screens.history.HistoryScreen
-import com.google.ai.edge.gallery.ui.screens.onboarding.ModelType
+import com.google.ai.edge.gallery.ui.viewmodels.ModelType
 import com.google.ai.edge.gallery.ui.screens.onboarding.OnboardingScreen
 import com.google.ai.edge.gallery.ui.screens.settings.SettingsScreen
 import com.google.ai.edge.gallery.ui.screens.splash.SplashScreen
@@ -106,6 +106,10 @@ fun NimittamNavigation(
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
                 onModelSelected = { modelType ->
+                    // Model selection is handled by ViewModel
+                    // Navigation will be triggered via onNavigateToChat after data is saved
+                },
+                onNavigateToChat = {
                     navController.navigate(Routes.CHAT) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }

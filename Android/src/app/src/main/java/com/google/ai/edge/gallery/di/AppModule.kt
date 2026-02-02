@@ -17,8 +17,10 @@ import com.google.ai.edge.gallery.AppLifecycleProvider
 import com.google.ai.edge.gallery.GalleryLifecycleProvider
 import com.google.ai.edge.gallery.SettingsSerializer
 import com.google.ai.edge.gallery.UserDataSerializer
+import com.google.ai.edge.gallery.common.HapticFeedbackManager
 import com.google.ai.edge.gallery.data.DataStoreRepository
 import com.google.ai.edge.gallery.data.DefaultDataStoreRepository
+import com.google.ai.edge.gallery.llm.ModelManager
 import com.google.ai.edge.gallery.proto.Settings
 import com.google.ai.edge.gallery.proto.UserData
 import dagger.Module
@@ -79,7 +81,7 @@ internal object AppModule {
     return GalleryLifecycleProvider()
   }
 
-  // Provides DataStoreRepository - stubbed since UI-related methods removed
+  // Provides DataStoreRepository with full implementation
   @Provides
   @Singleton
   fun provideDataStoreRepository(
@@ -87,5 +89,23 @@ internal object AppModule {
     userDataDataStore: DataStore<UserData>,
   ): DataStoreRepository {
     return DefaultDataStoreRepository(dataStore, userDataDataStore)
+  }
+
+  // Provides HapticFeedbackManager for haptic feedback throughout the app
+  @Provides
+  @Singleton
+  fun provideHapticFeedbackManager(
+    @ApplicationContext context: Context,
+  ): HapticFeedbackManager {
+    return HapticFeedbackManager(context)
+  }
+
+  // Provides ModelManager for model downloads and management
+  @Provides
+  @Singleton
+  fun provideModelManager(
+    @ApplicationContext context: Context,
+  ): ModelManager {
+    return ModelManager(context)
   }
 }

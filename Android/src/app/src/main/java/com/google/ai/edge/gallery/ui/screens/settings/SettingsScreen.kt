@@ -15,6 +15,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,14 +40,19 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,9 +66,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import androidx.compose.ui.unit.sp
 import com.google.ai.edge.gallery.ui.components.GlassmorphismLevel
@@ -76,7 +87,9 @@ import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import kotlinx.coroutines.delay
+import com.google.ai.edge.gallery.ui.viewmodels.SettingsEvent
+import com.google.ai.edge.gallery.ui.viewmodels.SettingsViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -89,12 +102,36 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel()
 ) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val hapticFeedback = LocalHapticFeedback.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showClearHistoryDialog by remember { mutableStateOf(false) }
+
+    // Handle events from ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.events.collectLatest { event ->
+            when (event) {
+                is SettingsEvent.NavigateBack -> onNavigateBack()
+                is SettingsEvent.ShowError -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+                is SettingsEvent.ShowSuccess -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+                is SettingsEvent.ConfirmClearHistory -> {
+                    showClearHistoryDialog = true
+                }
+            }
+        }
+    }
+
     var showContent by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        delay(100)
+        kotlinx.coroutines.delay(100)
         showContent = true
     }
 
@@ -112,7 +149,7 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             // Header
-            SettingsHeader(onNavigateBack = onNavigateBack)
+            SettingsHeader(onNavigateBack = { viewModel.navigateBack() })
 
             // Content
             Column(
@@ -123,21 +160,38 @@ fun SettingsScreen(
             ) {
                 // Model Section
                 SettingsSection(title = "Model") {
-                    ModelSettingsCard()
+                    ModelSettingsCard(
+                        temperature = uiState.temperature,
+                        maxTokens = uiState.maxTokens,
+                        selectedModel = uiState.selectedModel,
+                        onTemperatureChange = { viewModel.updateTemperature(it) },
+                        onMaxTokensChange = { viewModel.updateMaxTokens(it) }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
 
                 // Interface Section
                 SettingsSection(title = "Interface") {
-                    InterfaceSettingsCard()
+                    InterfaceSettingsCard(
+                        darkTheme = uiState.darkTheme,
+                        hapticFeedback = uiState.hapticFeedbackEnabled,
+                        notifications = uiState.notificationsEnabled,
+                        onDarkThemeChange = { viewModel.updateDarkTheme(it) },
+                        onHapticFeedbackChange = { viewModel.updateHapticFeedback(it) },
+                        onNotificationsChange = { viewModel.updateNotifications(it) }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
 
                 // Storage Section
                 SettingsSection(title = "Storage") {
-                    StorageSettingsCard()
+                    StorageSettingsCard(
+                        storageInfo = uiState.storageInfo,
+                        onClearHistory = { viewModel.requestClearHistory() },
+                        isLoading = uiState.isLoading
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
@@ -150,18 +204,59 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
+
+        // Snackbar
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        // Clear History Confirmation Dialog
+        if (showClearHistoryDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearHistoryDialog = false },
+                title = { Text("Clear Chat History") },
+                text = { Text("This will permanently delete all your conversations. This action cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.clearChatHistory()
+                            showClearHistoryDialog = false
+                        }
+                    ) {
+                        Text("Clear", color = Color.Red)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearHistoryDialog = false }) {
+                        Text("Cancel")
+                    }
+                },
+                containerColor = Gray12,
+                titleContentColor = PureWhite,
+                textContentColor = Gray80
+            )
+        }
     }
 }
 
 @Composable
 private fun SettingsHeader(onNavigateBack: () -> Unit) {
+    val hapticFeedback = LocalHapticFeedback.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onNavigateBack) {
+        IconButton(
+            onClick = {
+                // Haptic feedback for navigation back (confirmation)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onNavigateBack()
+            }
+        ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Back",
@@ -207,19 +302,26 @@ private fun SettingsSection(
 }
 
 @Composable
-private fun ModelSettingsCard() {
+private fun ModelSettingsCard(
+    temperature: Float,
+    maxTokens: Int,
+    selectedModel: String,
+    onTemperatureChange: (Float) -> Unit,
+    onMaxTokensChange: (Int) -> Unit
+) {
+    val hapticFeedback = LocalHapticFeedback.current
+    var lastHapticStep by remember { mutableFloatStateOf(-1f) }
+
     Column {
         SettingsItem(
             icon = Icons.Default.Memory,
             title = "Active Model",
-            subtitle = "Nimittam Lite (0.5B)"
+            subtitle = selectedModel
         )
 
         SettingsDivider()
 
         // Temperature slider
-        var temperature by remember { mutableFloatStateOf(0.7f) }
-
         Text(
             text = "Temperature",
             style = MaterialTheme.typography.bodyMedium,
@@ -239,7 +341,15 @@ private fun ModelSettingsCard() {
 
             Slider(
                 value = temperature,
-                onValueChange = { temperature = it },
+                onValueChange = { newValue ->
+                    onTemperatureChange(newValue)
+                    // Haptic feedback on slider steps (selection type)
+                    val currentStep = (newValue * 10).toInt()
+                    if (currentStep != lastHapticStep.toInt()) {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        lastHapticStep = currentStep.toFloat()
+                    }
+                },
                 valueRange = 0f..1f,
                 modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(
@@ -262,56 +372,128 @@ private fun ModelSettingsCard() {
             color = Gray80,
             modifier = Modifier.align(Alignment.End)
         )
+
+        SettingsDivider()
+
+        // Max tokens slider
+        Text(
+            text = "Max Tokens",
+            style = MaterialTheme.typography.bodyMedium,
+            color = PureWhite
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "256",
+                style = MaterialTheme.typography.labelSmall,
+                color = Gray64
+            )
+
+            Slider(
+                value = maxTokens.toFloat(),
+                onValueChange = { newValue ->
+                    onMaxTokensChange(newValue.toInt())
+                },
+                valueRange = 256f..4096f,
+                steps = 14,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = PureWhite,
+                    activeTrackColor = PureWhite,
+                    inactiveTrackColor = Gray24
+                )
+            )
+
+            Text(
+                text = "4096",
+                style = MaterialTheme.typography.labelSmall,
+                color = Gray64
+            )
+        }
+
+        Text(
+            text = "$maxTokens tokens",
+            style = MaterialTheme.typography.labelMedium,
+            color = Gray80,
+            modifier = Modifier.align(Alignment.End)
+        )
     }
 }
 
 @Composable
-private fun InterfaceSettingsCard() {
+private fun InterfaceSettingsCard(
+    darkTheme: Boolean,
+    hapticFeedback: Boolean,
+    notifications: Boolean,
+    onDarkThemeChange: (Boolean) -> Unit,
+    onHapticFeedbackChange: (Boolean) -> Unit,
+    onNotificationsChange: (Boolean) -> Unit
+) {
+    val localHaptic = LocalHapticFeedback.current
+
     Column {
         // Theme toggle
-        var isDarkTheme by remember { mutableStateOf(true) }
-
         SettingsToggleItem(
             icon = Icons.Default.DarkMode,
             title = "Dark Theme",
-            checked = isDarkTheme,
-            onCheckedChange = { isDarkTheme = it }
+            checked = darkTheme,
+            onCheckedChange = { newValue ->
+                // Haptic feedback for toggle (confirmation)
+                localHaptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onDarkThemeChange(newValue)
+            }
         )
 
         SettingsDivider()
 
-        // Haptic feedback
-        var hapticEnabled by remember { mutableStateOf(true) }
-
+        // Haptic feedback toggle
         SettingsToggleItem(
             icon = Icons.Default.Vibration,
             title = "Haptic Feedback",
-            checked = hapticEnabled,
-            onCheckedChange = { hapticEnabled = it }
+            checked = hapticFeedback,
+            onCheckedChange = { newValue ->
+                // Haptic feedback for toggle (confirmation)
+                localHaptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onHapticFeedbackChange(newValue)
+            }
         )
 
         SettingsDivider()
 
         // Notifications
-        var notificationsEnabled by remember { mutableStateOf(false) }
-
         SettingsToggleItem(
             icon = Icons.Default.Notifications,
             title = "Notifications",
-            checked = notificationsEnabled,
-            onCheckedChange = { notificationsEnabled = it }
+            checked = notifications,
+            onCheckedChange = { newValue ->
+                // Haptic feedback for toggle (confirmation)
+                localHaptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onNotificationsChange(newValue)
+            }
         )
     }
 }
 
 @Composable
-private fun StorageSettingsCard() {
+private fun StorageSettingsCard(
+    storageInfo: com.google.ai.edge.gallery.llm.StorageInfo?,
+    onClearHistory: () -> Unit,
+    isLoading: Boolean
+) {
+    val hapticFeedback = LocalHapticFeedback.current
+
     Column {
         // Storage visualization
-        StorageVisualization(
-            usedBytes = 512 * 1024 * 1024L,  // 512 MB
-            totalBytes = 2L * 1024 * 1024 * 1024  // 2 GB
-        )
+        storageInfo?.let { info ->
+            StorageVisualization(
+                usedBytes = info.usedBytes,
+                totalBytes = info.usedBytes + info.freeBytes
+            )
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -321,7 +503,12 @@ private fun StorageSettingsCard() {
             icon = Icons.Default.Delete,
             title = "Clear Chat History",
             subtitle = "Delete all conversations",
-            onClick = { }
+            onClick = {
+                // Haptic feedback for destructive action (warning)
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClearHistory()
+            },
+            isLoading = isLoading
         )
     }
 }
@@ -418,13 +605,14 @@ private fun SettingsActionItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    isLoading: Boolean = false
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(onClick = onClick, enabled = !isLoading)
             .padding(vertical = 4.dp)
     ) {
         Icon(
@@ -447,6 +635,14 @@ private fun SettingsActionItem(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = Gray64
+            )
+        }
+
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = PureWhite,
+                strokeWidth = 2.dp
             )
         }
     }
@@ -477,7 +673,9 @@ private fun MonochromeSwitch(
             .height(32.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(if (checked) PureWhite else Gray24)
-            .clickable { onCheckedChange(!checked) }
+            .clickable {
+                onCheckedChange(!checked)
+            }
             .padding(4.dp),
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
     ) {

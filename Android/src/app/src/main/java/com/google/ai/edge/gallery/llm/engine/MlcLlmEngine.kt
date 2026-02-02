@@ -18,6 +18,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import java.io.File
 import java.lang.ref.Cleaner
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,6 +29,13 @@ import javax.inject.Singleton
  * This engine provides the highest performance for on-device LLM inference
  * by leveraging Apache TVM's ML compilation for hardware-specific optimization.
  * 
+ * Features:
+ * - Integration with EngineLifecycleManager for robust initialization
+ * - Thread-safe state management
+ * - Prompt queuing during initialization
+ * - Automatic retry with exponential backoff
+ * - Native resource cleanup via Cleaner
+ * 
  * Supports:
  * - Vulkan GPU backend (primary)
  * - OpenCL GPU backend (fallback for older devices)
@@ -37,7 +45,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class MlcLlmEngine @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val lifecycleManager: EngineLifecycleManager
 ) : LlmEngine {
 
     companion object {
@@ -76,13 +85,18 @@ class MlcLlmEngine @Inject constructor(
     }
     
     // Use AtomicLong to hold the native handle so the Cleaner can access the updated value.
-    // The Cleaner is registered in the init block with the initial value (0L), but the actual
-    // handle is set later in initialize(). Using AtomicLong allows the cleanup action to
-    // read the current value when the object is garbage collected.
     private val nativeHandleRef = AtomicLong(0L)
 
-    private var _state: LlmEngineState = LlmEngineState.UNINITIALIZED
-    override val state: LlmEngineState get() = _state
+    // Legacy state - now delegated to lifecycleManager
+    override val state: LlmEngineState
+        get() = when (lifecycleManager.currentState) {
+            EngineState.UNINITIALIZED -> LlmEngineState.UNINITIALIZED
+            EngineState.INITIALIZING -> LlmEngineState.LOADING
+            EngineState.READY -> LlmEngineState.READY
+            EngineState.ERROR -> LlmEngineState.ERROR
+            EngineState.SHUTTING_DOWN -> LlmEngineState.RELEASED
+            EngineState.RELEASED -> LlmEngineState.RELEASED
+        }
 
     private var _config: LlmEngineConfig = LlmEngineConfig()
     override val config: LlmEngineConfig get() = _config
@@ -90,8 +104,7 @@ class MlcLlmEngine @Inject constructor(
     private var _lastMetrics: InferenceMetrics? = null
     override val lastMetrics: InferenceMetrics? get() = _lastMetrics
 
-    // Native handle for MLC-LLM engine - kept for backward compatibility
-    // All reads should use nativeHandleRef.get(), writes should use nativeHandleRef.set()
+    // Native handle for backward compatibility
     private var nativeHandle: Long = 0L
     
     // Cleaner for automatic native resource cleanup
@@ -103,6 +116,9 @@ class MlcLlmEngine @Inject constructor(
     
     // Conversation context
     private val conversationHistory = mutableListOf<ChatMessage>()
+    
+    // Initialization tracking
+    private val isInitialized = AtomicBoolean(false)
     
     // Cached generation parameters to reduce JNI calls
     private data class CachedGenerationParams(
@@ -116,9 +132,6 @@ class MlcLlmEngine @Inject constructor(
     
     init {
         // Register with Cleaner for automatic native resource cleanup.
-        // We use a lambda that reads from nativeHandleRef so it can access
-        // the updated handle value when the engine is garbage collected.
-        // This prevents memory leaks if release() is not called explicitly.
         cleanable = cleaner.register(this) {
             val handle = nativeHandleRef.get()
             if (handle != 0L) {
@@ -131,12 +144,16 @@ class MlcLlmEngine @Inject constructor(
                 nativeHandleRef.set(0L)
             }
         }
+        
+        // Register this engine with the lifecycle manager
+        lifecycleManager.setEngine(this)
+        
+        Log.i(TAG, "MlcLlmEngine created with lifecycle management")
     }
 
     override suspend fun initialize(modelPath: String, config: LlmEngineConfig): Result<Unit> {
         return withContext(Dispatchers.IO) {
             try {
-                _state = LlmEngineState.LOADING
                 _config = config
                 
                 Log.i(TAG, "Initializing MLC-LLM engine with model: $modelPath")
@@ -145,7 +162,6 @@ class MlcLlmEngine @Inject constructor(
                 // Validate model path
                 val modelFile = File(modelPath)
                 if (!modelFile.exists()) {
-                    _state = LlmEngineState.ERROR
                     return@withContext Result.failure(IllegalArgumentException("Model not found: $modelPath"))
                 }
                 
@@ -167,38 +183,27 @@ class MlcLlmEngine @Inject constructor(
                     useFlashAttention = config.useFlashAttention,
                     kvCacheType = config.kvCacheType.ordinal
                 )
-                nativeHandleRef.set(handle)  // Update the AtomicLong
-                nativeHandle = handle  // Keep for backward compatibility
+                nativeHandleRef.set(handle)
+                nativeHandle = handle
                 
                 // Check cancellation after native call
                 ensureActive()
                 
                 if (handle == 0L) {
-                    _state = LlmEngineState.ERROR
                     return@withContext Result.failure(RuntimeException("Failed to initialize MLC-LLM engine"))
                 }
                 
-                _state = LlmEngineState.READY
+                isInitialized.set(true)
                 Log.i(TAG, "MLC-LLM engine initialized successfully")
                 Result.success(Unit)
                 
             } catch (e: CancellationException) {
                 // Clean up native resources if initialization was cancelled
-                val handle = nativeHandleRef.get()
-                if (handle != 0L) {
-                    try {
-                        nativeRelease(handle)
-                    } catch (cleanupError: Exception) {
-                        Log.e(TAG, "Error cleaning up native handle after cancellation", cleanupError)
-                    }
-                    nativeHandleRef.set(0L)
-                    nativeHandle = 0L
-                }
-                _state = LlmEngineState.ERROR
+                cleanupNativeResources()
                 Log.d(TAG, "Initialization cancelled")
                 throw e
             } catch (e: Exception) {
-                _state = LlmEngineState.ERROR
+                cleanupNativeResources()
                 Log.e(TAG, "Failed to initialize MLC-LLM engine", e)
                 Result.failure(e)
             }
@@ -207,13 +212,22 @@ class MlcLlmEngine @Inject constructor(
 
     override fun generate(prompt: String, params: GenerationParams): Flow<GenerationResult> {
         return callbackFlow {
-            if (_state != LlmEngineState.READY) {
-                trySend(GenerationResult.Error("Engine not ready, current state: $_state"))
+            // Check if engine is ready through lifecycle manager
+            if (!lifecycleManager.canAcceptPrompts()) {
+                // If initializing, queue the prompt
+                if (lifecycleManager.shouldQueuePrompts()) {
+                    val result = lifecycleManager.submitPrompt(prompt, null, params)
+                    result.collect { send(it) }
+                    close()
+                    return@callbackFlow
+                }
+                
+                val currentState = lifecycleManager.currentState
+                trySend(GenerationResult.Error("Engine not ready, current state: $currentState"))
                 close()
                 return@callbackFlow
             }
             
-            _state = LlmEngineState.GENERATING
             val startTime = System.currentTimeMillis()
             var promptTokens = 0
             var generatedTokens = 0
@@ -288,8 +302,6 @@ class MlcLlmEngine @Inject constructor(
                 } catch (e: Exception) {
                     Log.e(TAG, "Generation error", e)
                     trySend(GenerationResult.Error(e.message ?: "Unknown error", e))
-                } finally {
-                    _state = LlmEngineState.READY
                 }
             }
             
@@ -308,7 +320,6 @@ class MlcLlmEngine @Inject constructor(
     override suspend fun stopGeneration() {
         currentGenerationJob?.cancel()
         nativeStopGeneration(nativeHandleRef.get())
-        _state = LlmEngineState.READY
     }
 
     override suspend fun resetContext() {
@@ -325,14 +336,8 @@ class MlcLlmEngine @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 currentGenerationJob?.cancelAndJoin()
-                val handle = nativeHandleRef.get()
-                if (handle != 0L) {
-                    nativeRelease(handle)
-                    nativeHandleRef.set(0L)
-                    nativeHandle = 0L
-                }
+                cleanupNativeResources()
                 cleanable.clean()
-                _state = LlmEngineState.RELEASED
                 Log.i(TAG, "MLC-LLM engine released")
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing engine", e)
@@ -370,7 +375,84 @@ class MlcLlmEngine @Inject constructor(
         return backends
     }
 
+    /**
+     * Initialize the engine through the lifecycle manager.
+     * This is the recommended way to initialize the engine.
+     * 
+     * @param modelPath Path to the model file
+     * @param config Engine configuration
+     * @return Result of initialization
+     */
+    suspend fun initializeWithLifecycle(
+        modelPath: String,
+        config: LlmEngineConfig = LlmEngineConfig()
+    ): Result<Unit> {
+        return lifecycleManager.initialize(modelPath, config)
+    }
+
+    /**
+     * Submit a prompt for generation through the lifecycle manager.
+     * This handles queuing during initialization automatically.
+     * 
+     * @param prompt The prompt text
+     * @param messages Optional conversation history
+     * @param params Generation parameters
+     * @return Flow of generation results
+     */
+    fun submitPrompt(
+        prompt: String,
+        messages: List<ChatMessage>? = null,
+        params: GenerationParams = GenerationParams()
+    ): Flow<GenerationResult> {
+        return flow {
+            lifecycleManager.submitPrompt(prompt, messages, params).collect {
+                emit(it)
+            }
+        }
+    }
+
+    /**
+     * Get the current initialization progress.
+     */
+    val initializationProgress: StateFlow<InitializationProgress>
+        get() = lifecycleManager.progressFlow
+
+    /**
+     * Get the current engine state.
+     */
+    val engineState: StateFlow<EngineState>
+        get() = lifecycleManager.stateFlow
+
+    /**
+     * Wait for the engine to be ready.
+     * 
+     * @param timeoutMs Maximum time to wait in milliseconds
+     * @return true if ready, false if timeout
+     */
+    suspend fun waitForReady(timeoutMs: Long = 30000L): Boolean {
+        return lifecycleManager.waitForReady(timeoutMs)
+    }
+
+    /**
+     * Check if the engine can accept prompts.
+     */
+    fun isReady(): Boolean = lifecycleManager.canAcceptPrompts()
+
     // ==================== Private Helper Methods ====================
+
+    private fun cleanupNativeResources() {
+        val handle = nativeHandleRef.get()
+        if (handle != 0L) {
+            try {
+                nativeRelease(handle)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing native handle during cleanup", e)
+            }
+            nativeHandleRef.set(0L)
+            nativeHandle = 0L
+        }
+        isInitialized.set(false)
+    }
 
     private fun selectOptimalBackend(preferred: HardwareBackend): HardwareBackend {
         val supported = getSupportedBackends()

@@ -39,14 +39,13 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,9 +55,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.components.RealtimeTranscriptionWaveform
 import com.google.ai.edge.gallery.ui.theme.AnimationDuration
@@ -70,7 +73,10 @@ import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import kotlinx.coroutines.delay
+import com.google.ai.edge.gallery.ui.viewmodels.VoiceInputEvent
+import com.google.ai.edge.gallery.ui.viewmodels.VoiceInputState
+import com.google.ai.edge.gallery.ui.viewmodels.VoiceInputViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -83,46 +89,35 @@ import kotlin.math.sin
  * Real-time transcription
  */
 
-enum class VoiceInputState {
-    IDLE,
-    LISTENING,
-    PROCESSING,
-    COMPLETE
-}
-
 @Composable
 fun VoiceInputScreen(
     onDismiss: () -> Unit = {},
-    onComplete: (String) -> Unit = {}
+    onComplete: (String) -> Unit = {},
+    viewModel: VoiceInputViewModel = hiltViewModel()
 ) {
-    var state by remember { mutableStateOf(VoiceInputState.IDLE) }
-    var audioLevel by remember { mutableFloatStateOf(0.3f) }
-    var transcription by remember { mutableStateOf("") }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val hapticFeedback = LocalHapticFeedback.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    // Simulate voice input
-    LaunchedEffect(state) {
-        when (state) {
-            VoiceInputState.IDLE -> {
-                delay(500)
-                state = VoiceInputState.LISTENING
-            }
-            VoiceInputState.LISTENING -> {
-                // Simulate audio levels
-                repeat(50) {
-                    audioLevel = 0.2f + Math.random().toFloat() * 0.6f
-                    delay(100)
+    // Handle events from ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.events.collectLatest { event ->
+            when (event) {
+                is VoiceInputEvent.Dismiss -> onDismiss()
+                is VoiceInputEvent.TranscriptionComplete -> {
+                    onComplete(event.text)
                 }
-                state = VoiceInputState.PROCESSING
+                is VoiceInputEvent.ShowError -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
             }
-            VoiceInputState.PROCESSING -> {
-                delay(800)
-                transcription = "What's the weather like today?"
-                state = VoiceInputState.COMPLETE
-                delay(1000)
-                onComplete(transcription)
-            }
-            VoiceInputState.COMPLETE -> {}
         }
+    }
+
+    // Auto-start recording when screen opens
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(500)
+        viewModel.startRecording()
     }
 
     Box(
@@ -143,7 +138,13 @@ fun VoiceInputScreen(
                 .padding(24.dp),
             contentAlignment = Alignment.TopEnd
         ) {
-            IconButton(onClick = onDismiss) {
+            IconButton(
+                onClick = {
+                    // Haptic feedback for dismiss (confirmation)
+                    hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    viewModel.dismiss()
+                }
+            ) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Close",
@@ -161,8 +162,8 @@ fun VoiceInputScreen(
         ) {
             // Morphing orb
             MorphingVoiceOrb(
-                state = state,
-                audioLevel = audioLevel,
+                state = uiState.state,
+                audioLevel = uiState.audioLevel,
                 modifier = Modifier.size(200.dp)
             )
 
@@ -170,7 +171,7 @@ fun VoiceInputScreen(
 
             // Status text
             AnimatedContent(
-                targetState = state,
+                targetState = uiState.state,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(300)) togetherWith
                             fadeOut(animationSpec = tween(200))
@@ -182,6 +183,7 @@ fun VoiceInputScreen(
                     VoiceInputState.LISTENING -> "Listening..."
                     VoiceInputState.PROCESSING -> "Processing..."
                     VoiceInputState.COMPLETE -> "Done"
+                    VoiceInputState.ERROR -> "Error"
                 }
 
                 Text(
@@ -194,12 +196,12 @@ fun VoiceInputScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             // Waveform visualization
-            if (state == VoiceInputState.LISTENING) {
+            if (uiState.state == VoiceInputState.LISTENING) {
                 RealtimeTranscriptionWaveform(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 48.dp),
-                    audioLevel = audioLevel
+                    audioLevel = uiState.audioLevel
                 )
             }
 
@@ -207,7 +209,7 @@ fun VoiceInputScreen(
 
             // Transcription text
             AnimatedContent(
-                targetState = transcription,
+                targetState = uiState.transcription,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(400)) togetherWith
                             fadeOut(animationSpec = tween(200))
@@ -224,7 +226,23 @@ fun VoiceInputScreen(
                     )
                 }
             }
+
+            // Recording duration
+            if (uiState.state == VoiceInputState.LISTENING) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = viewModel.formatDuration(uiState.recordingDurationMs),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Gray64
+                )
+            }
         }
+
+        // Snackbar
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
 }
 
@@ -290,6 +308,7 @@ private fun MorphingVoiceOrb(
             VoiceInputState.LISTENING -> 1f + audioLevel * 0.3f
             VoiceInputState.PROCESSING -> 0.9f
             VoiceInputState.COMPLETE -> 0.8f
+            VoiceInputState.ERROR -> 0.8f
         }
 
         val radius = baseRadius * currentScale

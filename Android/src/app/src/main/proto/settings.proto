@@ -15,10 +15,28 @@ option java_package = "com.google.ai.edge.gallery.proto";
 option java_multiple_files = true;
 
 message Settings {
-  // UI-related fields removed
-  reserved 1, 2, 3, 5;
+  // Model settings
+  float temperature = 1;
+  int32 max_tokens = 2;
+  float top_p = 3;
+  int32 top_k = 4;
+  float repeat_penalty = 5;
+  
+  // UI settings
+  bool dark_theme = 6;
+  bool haptic_feedback_enabled = 7;
+  bool notifications_enabled = 8;
+  
+  // System settings
+  string selected_model = 9;
+  int32 context_size = 10;
+  string hardware_backend = 11;
 }
 
 message UserData {
-  reserved 1;
+  bool onboarding_completed = 1;
+  string selected_model_type = 2;
+  int64 first_launch_timestamp = 3;
+  int32 launch_count = 4;
+  string last_conversation_id = 5;
 }
