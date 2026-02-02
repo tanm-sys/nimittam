@@ -10,6 +10,15 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Required for downloading models from the internet -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Recommended for checking network connectivity before downloads -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Note: Storage permissions (WRITE_EXTERNAL_STORAGE) are NOT required -->
+    <!-- DataStore and ModelManager use internal app storage (/data/data/<package>/files/) -->
+    <!-- which apps can access without any special permissions -->
+
     <application
         android:name="${applicationName}"
         android:allowBackup="true"

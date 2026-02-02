@@ -108,36 +108,57 @@ class ModelManager @Inject constructor(
      * Extract bundled model from assets if present
      */
     suspend fun extractBundledModel() = withContext(Dispatchers.IO) {
+        val operationId = java.util.UUID.randomUUID().toString().take(8)
+        val threadName = Thread.currentThread().name
         val bundledModelName = "qwen2.5-0.5b"
         val targetDir = File(modelsDir, bundledModelName)
-        
+
+        Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] START on thread: $threadName")
+        Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] targetDir: ${targetDir.absolutePath}, exists: ${targetDir.exists()}")
+
         // If already exists and looks valid, skip
         if (targetDir.exists() && File(targetDir, "mlc-chat-config.json").exists()) {
-            Log.i(TAG, "Bundled model already extracted: $bundledModelName")
+            Log.i(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Bundled model already extracted, skipping")
             return@withContext
         }
-        
-        Log.i(TAG, "Extracting bundled model: $bundledModelName")
-        targetDir.mkdirs()
-        
+
+        Log.i(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Extracting bundled model: $bundledModelName")
+
+        // Check available space
+        val freeSpace = targetDir.parentFile?.freeSpace ?: -1
+        Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Free space: ${freeSpace / 1024 / 1024}MB")
+
+        val created = targetDir.mkdirs()
+        Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] mkdirs result: $created")
+
         try {
             val assets = context.assets
-            val files = assets.list(bundledModelName) ?: return@withContext
-            
+            val files = assets.list(bundledModelName)
+            Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Found ${files?.size ?: 0} files in assets")
+
+            if (files == null) {
+                Log.w(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] No files found in assets for $bundledModelName")
+                return@withContext
+            }
+
             for (filename in files) {
                 val assetPath = "$bundledModelName/$filename"
                 val outFile = File(targetDir, filename)
-                
+                Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Extracting: $filename -> ${outFile.absolutePath}")
+
                 assets.open(assetPath).use { input ->
                     FileOutputStream(outFile).use { output ->
-                        input.copyTo(output)
+                        val bytesCopied = input.copyTo(output)
+                        Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Copied $bytesCopied bytes for $filename")
                     }
                 }
             }
-            Log.i(TAG, "Bundled model extracted successfully")
+            Log.i(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] SUCCESS - Extracted ${files.size} files")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract bundled model", e)
-            targetDir.deleteRecursively()
+            Log.e(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
+            val deleted = targetDir.deleteRecursively()
+            Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Cleanup deleted: $deleted")
+            throw e // Re-throw to let caller know extraction failed
         }
     }
 

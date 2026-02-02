@@ -43,16 +43,20 @@ class GalleryApplication : Application() {
 
     // Check for crash recovery
     checkCrashRecovery()
-    
+
     // Extract bundled LLM model in background with dedicated thread for I/O priority
     // OPTIMIZATION: Uses a dedicated single-threaded dispatcher for model extraction
     // to ensure it doesn't compete with other I/O operations and completes quickly
     val modelExtractionDispatcher = Dispatchers.IO.limitedParallelism(1)
     CoroutineScope(modelExtractionDispatcher).launch {
+        val operationId = java.util.UUID.randomUUID().toString().take(8)
+        val threadName = Thread.currentThread().name
+        Log.d(TAG, "[DIAGNOSTIC] GalleryApplication[$operationId] Starting model extraction on thread: $threadName")
         try {
             modelManager.extractBundledModel()
+            Log.d(TAG, "[DIAGNOSTIC] GalleryApplication[$operationId] Model extraction completed")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract bundled model", e)
+            Log.e(TAG, "[DIAGNOSTIC] GalleryApplication[$operationId] Model extraction failed: ${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
   }

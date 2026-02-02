@@ -97,10 +97,11 @@ class DefaultDataStoreRepository @Inject constructor(
     override val settingsFlow: Flow<Settings> = dataStore.data
         .catch { exception ->
             if (exception is IOException) {
-                Log.e(TAG, "Error reading settings", exception)
+                Log.e(TAG, "Error reading settings, emitting default", exception)
                 emit(Settings.getDefaultInstance())
             } else {
-                throw exception
+                Log.e(TAG, "Unexpected error reading settings, emitting default", exception)
+                emit(Settings.getDefaultInstance())
             }
         }
     
@@ -142,10 +143,11 @@ class DefaultDataStoreRepository @Inject constructor(
     override val userDataFlow: Flow<UserData> = userDataDataStore.data
         .catch { exception ->
             if (exception is IOException) {
-                Log.e(TAG, "Error reading user data", exception)
+                Log.e(TAG, "Error reading user data, emitting default", exception)
                 emit(UserData.getDefaultInstance())
             } else {
-                throw exception
+                Log.e(TAG, "Unexpected error reading user data, emitting default", exception)
+                emit(UserData.getDefaultInstance())
             }
         }
     
@@ -235,12 +237,14 @@ class DefaultDataStoreRepository @Inject constructor(
     
     private suspend fun updateSettings(transform: (Settings.Builder) -> Settings.Builder): Result<Unit> {
         return try {
+            Log.d(TAG, "updateSettings: starting update")
             dataStore.updateData { currentSettings ->
                 transform(currentSettings.toBuilder()).build()
             }
+            Log.d(TAG, "updateSettings: success")
             Result.success(Unit)
         } catch (e: IOException) {
-            Log.e(TAG, "Error updating settings", e)
+            Log.e(TAG, "IO Error updating settings", e)
             Result.failure(e)
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error updating settings", e)
@@ -249,16 +253,34 @@ class DefaultDataStoreRepository @Inject constructor(
     }
     
     private suspend fun updateUserData(transform: (UserData.Builder) -> UserData.Builder): Result<Unit> {
+        val operationId = java.util.UUID.randomUUID().toString().take(8)
+        val threadName = Thread.currentThread().name
+        Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] START on thread: $threadName")
+
         return try {
+            // Check available storage before write
+            val dataStoreFile = java.io.File(android.os.Environment.getDataDirectory(), "data/${android.os.Process.myUid()}/files/datastore/user_data.pb")
+            val freeSpace = dataStoreFile.parentFile?.freeSpace ?: -1
+            Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Free space: ${freeSpace / 1024}KB, DataStore file exists: ${dataStoreFile.exists()}")
+
+            Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Calling updateData...")
             userDataDataStore.updateData { currentUserData ->
-                transform(currentUserData.toBuilder()).build()
+                Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Inside updateData callback, current data: onboardingCompleted=${currentUserData.onboardingCompleted}, selectedModelType=${currentUserData.selectedModelType}")
+                val builder = currentUserData.toBuilder()
+                val result = transform(builder).build()
+                Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Transformed data: onboardingCompleted=${result.onboardingCompleted}, selectedModelType=${result.selectedModelType}")
+                result
             }
+            Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] SUCCESS")
             Result.success(Unit)
         } catch (e: IOException) {
-            Log.e(TAG, "Error updating user data", e)
+            Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] IO ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
+            Result.failure(e)
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] ILLEGAL STATE ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(e)
         } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error updating user data", e)
+            Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] UNEXPECTED ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
             Result.failure(e)
         }
     }

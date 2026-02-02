@@ -9,9 +9,12 @@
 package com.google.ai.edge.gallery.di
 
 import android.content.Context
+import android.util.Log
+import androidx.datastore.core.CorruptionException
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.core.Serializer
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.dataStoreFile
 import com.google.ai.edge.gallery.AppLifecycleProvider
 import com.google.ai.edge.gallery.GalleryLifecycleProvider
@@ -34,6 +37,8 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 internal object AppModule {
 
+  private const val TAG = "AppModule"
+
   // Provides the SettingsSerializer
   @Provides
   @Singleton
@@ -48,7 +53,7 @@ internal object AppModule {
     return UserDataSerializer
   }
 
-  // Provides DataStore<Settings>
+  // Provides DataStore<Settings> with corruption handling
   @Provides
   @Singleton
   fun provideSettingsDataStore(
@@ -58,19 +63,33 @@ internal object AppModule {
     return DataStoreFactory.create(
       serializer = settingsSerializer,
       produceFile = { context.dataStoreFile("settings.pb") },
+      corruptionHandler = ReplaceFileCorruptionHandler { corruptionException ->
+        Log.e(TAG, "Settings DataStore corrupted, replacing with default", corruptionException)
+        Settings.getDefaultInstance()
+      }
     )
   }
 
-  // Provides DataStore<UserData>
+  // Provides DataStore<UserData> with corruption handling
   @Provides
   @Singleton
   fun provideUserDataDataStore(
     @ApplicationContext context: Context,
     userDataSerializer: Serializer<UserData>,
   ): DataStore<UserData> {
+    val operationId = java.util.UUID.randomUUID().toString().take(8)
+    Log.d(TAG, "[DIAGNOSTIC] provideUserDataDataStore[$operationId] Creating UserData DataStore")
+
+    val dataStoreFile = context.dataStoreFile("user_data.pb")
+    Log.d(TAG, "[DIAGNOSTIC] provideUserDataDataStore[$operationId] DataStore file: ${dataStoreFile.absolutePath}")
+
     return DataStoreFactory.create(
       serializer = userDataSerializer,
-      produceFile = { context.dataStoreFile("user_data.pb") },
+      produceFile = { dataStoreFile },
+      corruptionHandler = ReplaceFileCorruptionHandler { corruptionException ->
+        Log.e(TAG, "[DIAGNOSTIC] provideUserDataDataStore[$operationId] DataStore corrupted, replacing with default", corruptionException)
+        UserData.getDefaultInstance()
+      }
     )
   }
 

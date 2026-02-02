@@ -16,6 +16,7 @@ import com.google.ai.edge.gallery.llm.DownloadProgress
 import com.google.ai.edge.gallery.llm.ModelInfo
 import com.google.ai.edge.gallery.llm.ModelManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -52,9 +53,9 @@ enum class ModelType {
  * Download state for model
  */
 sealed class DownloadState {
-    object NotStarted : DownloadState()
+    data object NotStarted : DownloadState()
     data class InProgress(val progress: DownloadProgress) : DownloadState()
-    object Completed : DownloadState()
+    data object Completed : DownloadState()
     data class Error(val message: String) : DownloadState()
 }
 
@@ -75,16 +76,16 @@ data class OnboardingUiState(
  * Events emitted by the OnboardingViewModel
  */
 sealed class OnboardingEvent {
-    object NavigateToChat : OnboardingEvent()
-    data class ShowError(val message: String) : OnboardingEvent()
-    data class ShowSuccess(val message: String) : OnboardingEvent()
-    data class DownloadProgressUpdate(val progress: Float) : OnboardingEvent()
-    object RequestStoragePermission : OnboardingEvent()
+    data object NavigateToChat : OnboardingEvent()
+    class ShowError(val message: String) : OnboardingEvent()
+    class ShowSuccess(val message: String) : OnboardingEvent()
+    class DownloadProgressUpdate(val progress: Float) : OnboardingEvent()
+    data object RequestStoragePermission : OnboardingEvent()
 }
 
 /**
  * ViewModel for the Onboarding screen.
- * Manages model selection and download state.
+ * Manages model selection and download state with retry logic for DataStore operations.
  */
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
@@ -95,6 +96,11 @@ class OnboardingViewModel @Inject constructor(
     companion object {
         private const val TAG = "OnboardingViewModel"
         private const val LITE_MODEL_PATH = "qwen2.5-0.5b"
+        
+        // Retry configuration
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val INITIAL_RETRY_DELAY_MS = 100L
+        private const val MAX_RETRY_DELAY_MS = 1000L
     }
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -173,15 +179,20 @@ class OnboardingViewModel @Inject constructor(
      * Extract bundled model from assets
      */
     private fun extractBundledModel() {
+        val operationId = java.util.UUID.randomUUID().toString().take(8)
+        val threadName = Thread.currentThread().name
+        Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] START on thread: $threadName")
+
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isLoading = true) }
+                Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] Calling modelManager.extractBundledModel()...")
                 modelManager.extractBundledModel()
                 _uiState.update { it.copy(isLoading = false) }
-                Log.i(TAG, "Bundled model extracted successfully")
+                Log.i(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] SUCCESS")
             } catch (e: Exception) {
-                Log.e(TAG, "Error extracting bundled model", e)
-                _uiState.update { 
+                Log.e(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
+                _uiState.update {
                     it.copy(
                         isLoading = false,
                         errorMessage = "Failed to prepare model"
@@ -208,6 +219,8 @@ class OnboardingViewModel @Inject constructor(
 
     /**
      * Continue after model selection
+     * Implements retry logic with exponential backoff for DataStore operations
+     * to handle transient failures during first-launch initialization.
      */
     fun continueToApp() {
         val selectedModel = _uiState.value.selectedModel
@@ -221,11 +234,14 @@ class OnboardingViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isLoading = true) }
+                Log.d(TAG, "Starting onboarding completion for model: ${selectedModel.name}")
 
-                // Save selected model type - check result for success
-                val modelTypeResult = dataStoreRepository.updateSelectedModelType(selectedModel.name)
+                // Save selected model type with retry logic
+                Log.d(TAG, "Attempting to save model type: ${selectedModel.name}")
+                val modelTypeResult = saveModelTypeWithRetry(selectedModel.name)
+                
                 modelTypeResult.onFailure { error ->
-                    Log.e(TAG, "Failed to save model type", error)
+                    Log.e(TAG, "Failed to save model type after $MAX_RETRY_ATTEMPTS attempts", error)
                     _uiState.update { 
                         it.copy(
                             isLoading = false,
@@ -235,11 +251,15 @@ class OnboardingViewModel @Inject constructor(
                     _events.emit(OnboardingEvent.ShowError("Failed to save model selection"))
                     return@launch
                 }
+                
+                Log.d(TAG, "Successfully saved model type: ${selectedModel.name}")
 
-                // Mark onboarding as completed - check result for success
-                val onboardingResult = dataStoreRepository.completeOnboarding()
+                // Mark onboarding as completed with retry logic
+                Log.d(TAG, "Attempting to complete onboarding")
+                val onboardingResult = completeOnboardingWithRetry()
+                
                 onboardingResult.onFailure { error ->
-                    Log.e(TAG, "Failed to complete onboarding", error)
+                    Log.e(TAG, "Failed to complete onboarding after $MAX_RETRY_ATTEMPTS attempts", error)
                     _uiState.update { 
                         it.copy(
                             isLoading = false,
@@ -249,12 +269,14 @@ class OnboardingViewModel @Inject constructor(
                     _events.emit(OnboardingEvent.ShowError("Failed to complete setup"))
                     return@launch
                 }
+                
+                Log.d(TAG, "Successfully completed onboarding")
 
                 _uiState.update { it.copy(isLoading = false) }
                 _events.emit(OnboardingEvent.NavigateToChat)
 
             } catch (e: Exception) {
-                Log.e(TAG, "Error completing onboarding", e)
+                Log.e(TAG, "Unexpected error completing onboarding", e)
                 _uiState.update { 
                     it.copy(
                         isLoading = false,
@@ -264,6 +286,102 @@ class OnboardingViewModel @Inject constructor(
                 _events.emit(OnboardingEvent.ShowError("Failed to complete setup"))
             }
         }
+    }
+    
+    /**
+     * Save model type with exponential backoff retry logic.
+     * Handles transient DataStore initialization failures during first launch.
+     */
+    private suspend fun saveModelTypeWithRetry(modelType: String): Result<Unit> {
+        val operationId = java.util.UUID.randomUUID().toString().take(8)
+        val threadName = Thread.currentThread().name
+        Log.d(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] START on thread: $threadName, modelType=$modelType")
+
+        var lastException: Exception? = null
+        var currentDelay = INITIAL_RETRY_DELAY_MS
+
+        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+            Log.d(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] attempt $attempt/$MAX_RETRY_ATTEMPTS")
+
+            try {
+                Log.d(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] Calling dataStoreRepository.updateSelectedModelType...")
+                val result = dataStoreRepository.updateSelectedModelType(modelType)
+                Log.d(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] Result received: isSuccess=${result.isSuccess}, isFailure=${result.isFailure}")
+
+                result.onSuccess {
+                    Log.d(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] SUCCESS on attempt $attempt")
+                    return Result.success(Unit)
+                }
+
+                result.onFailure { error ->
+                    Log.w(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] attempt $attempt FAILED: ${error.javaClass.simpleName}: ${error.message}", error)
+                    lastException = error as? Exception ?: Exception(error)
+                }
+
+                // Don't delay on the last attempt
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    Log.d(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] waiting ${currentDelay}ms before retry")
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] attempt $attempt THREW EXCEPTION: ${e.javaClass.simpleName}: ${e.message}", e)
+                lastException = e
+
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+            }
+        }
+
+        Log.e(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] ALL ATTEMPTS FAILED, lastException: ${lastException?.javaClass?.simpleName}: ${lastException?.message}")
+        return Result.failure(lastException ?: Exception("Failed to save model type after $MAX_RETRY_ATTEMPTS attempts"))
+    }
+    
+    /**
+     * Complete onboarding with exponential backoff retry logic.
+     */
+    private suspend fun completeOnboardingWithRetry(): Result<Unit> {
+        var lastException: Exception? = null
+        var currentDelay = INITIAL_RETRY_DELAY_MS
+        
+        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+            try {
+                Log.d(TAG, "completeOnboardingWithRetry: attempt $attempt/$MAX_RETRY_ATTEMPTS")
+                
+                val result = dataStoreRepository.completeOnboarding()
+                
+                result.onSuccess {
+                    Log.d(TAG, "completeOnboardingWithRetry: success on attempt $attempt")
+                    return Result.success(Unit)
+                }
+                
+                result.onFailure { error ->
+                    Log.w(TAG, "completeOnboardingWithRetry: attempt $attempt failed", error)
+                    lastException = error as? Exception ?: Exception(error)
+                }
+                
+                // Don't delay on the last attempt
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    Log.d(TAG, "completeOnboardingWithRetry: waiting ${currentDelay}ms before retry")
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+                
+            } catch (e: Exception) {
+                Log.w(TAG, "completeOnboardingWithRetry: attempt $attempt threw exception", e)
+                lastException = e
+                
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+            }
+        }
+        
+        return Result.failure(lastException ?: Exception("Failed to complete onboarding after $MAX_RETRY_ATTEMPTS attempts"))
     }
 
     /**
@@ -279,16 +397,33 @@ class OnboardingViewModel @Inject constructor(
 
     /**
      * Skip onboarding (for development/testing)
+     * Uses the same retry logic as normal onboarding to ensure reliability.
      */
     fun skipOnboarding() {
         viewModelScope.launch {
             try {
-                // Select LITE as default
-                dataStoreRepository.updateSelectedModelType(ModelType.LITE.name)
-                dataStoreRepository.completeOnboarding()
+                Log.d(TAG, "Skipping onboarding with LITE model as default")
+                
+                // Select LITE as default with retry logic
+                val modelTypeResult = saveModelTypeWithRetry(ModelType.LITE.name)
+                modelTypeResult.onFailure { error ->
+                    Log.e(TAG, "Failed to save model type during skip", error)
+                    _events.emit(OnboardingEvent.ShowError("Failed to save model selection"))
+                    return@launch
+                }
+                
+                val onboardingResult = completeOnboardingWithRetry()
+                onboardingResult.onFailure { error ->
+                    Log.e(TAG, "Failed to complete onboarding during skip", error)
+                    _events.emit(OnboardingEvent.ShowError("Failed to complete setup"))
+                    return@launch
+                }
+                
+                Log.d(TAG, "Successfully skipped onboarding")
                 _events.emit(OnboardingEvent.NavigateToChat)
             } catch (e: Exception) {
-                Log.e(TAG, "Error skipping onboarding", e)
+                Log.e(TAG, "Unexpected error skipping onboarding", e)
+                _events.emit(OnboardingEvent.ShowError("Failed to complete setup"))
             }
         }
     }
