@@ -31,6 +31,9 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import javax.inject.Singleton
 
 @Module
@@ -38,6 +41,14 @@ import javax.inject.Singleton
 internal object AppModule {
 
   private const val TAG = "AppModule"
+
+  // Provides a dedicated CoroutineScope for DataStore operations
+  // SupervisorJob ensures that failure of one child coroutine doesn't cancel siblings
+  @Provides
+  @Singleton
+  fun provideDataStoreScope(): CoroutineScope {
+    return CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  }
 
   // Provides the SettingsSerializer
   @Provides
@@ -53,12 +64,13 @@ internal object AppModule {
     return UserDataSerializer
   }
 
-  // Provides DataStore<Settings> with corruption handling
+  // Provides DataStore<Settings> with corruption handling and proper scope
   @Provides
   @Singleton
   fun provideSettingsDataStore(
     @ApplicationContext context: Context,
     settingsSerializer: Serializer<Settings>,
+    dataStoreScope: CoroutineScope,
   ): DataStore<Settings> {
     return DataStoreFactory.create(
       serializer = settingsSerializer,
@@ -66,16 +78,18 @@ internal object AppModule {
       corruptionHandler = ReplaceFileCorruptionHandler { corruptionException ->
         Log.e(TAG, "Settings DataStore corrupted, replacing with default", corruptionException)
         Settings.getDefaultInstance()
-      }
+      },
+      scope = dataStoreScope
     )
   }
 
-  // Provides DataStore<UserData> with corruption handling
+  // Provides DataStore<UserData> with corruption handling and proper scope
   @Provides
   @Singleton
   fun provideUserDataDataStore(
     @ApplicationContext context: Context,
     userDataSerializer: Serializer<UserData>,
+    dataStoreScope: CoroutineScope,
   ): DataStore<UserData> {
     val operationId = java.util.UUID.randomUUID().toString().take(8)
     Log.d(TAG, "[DIAGNOSTIC] provideUserDataDataStore[$operationId] Creating UserData DataStore")
@@ -89,7 +103,8 @@ internal object AppModule {
       corruptionHandler = ReplaceFileCorruptionHandler { corruptionException ->
         Log.e(TAG, "[DIAGNOSTIC] provideUserDataDataStore[$operationId] DataStore corrupted, replacing with default", corruptionException)
         UserData.getDefaultInstance()
-      }
+      },
+      scope = dataStoreScope
     )
   }
 

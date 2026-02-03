@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -91,6 +93,10 @@ class DefaultDataStoreRepository @Inject constructor(
         const val DEFAULT_CONTEXT_SIZE = 4096
         const val DEFAULT_HARDWARE_BACKEND = "VULKAN_GPU"
     }
+    
+    // Mutex to serialize write operations and prevent concurrent modification issues
+    private val settingsMutex = Mutex()
+    private val userDataMutex = Mutex()
     
     // ==================== Settings Flows ====================
     
@@ -236,19 +242,21 @@ class DefaultDataStoreRepository @Inject constructor(
     // ==================== Private Helper Methods ====================
     
     private suspend fun updateSettings(transform: (Settings.Builder) -> Settings.Builder): Result<Unit> {
-        return try {
-            Log.d(TAG, "updateSettings: starting update")
-            dataStore.updateData { currentSettings ->
-                transform(currentSettings.toBuilder()).build()
+        return settingsMutex.withLock {
+            try {
+                Log.d(TAG, "updateSettings: starting update")
+                dataStore.updateData { currentSettings ->
+                    transform(currentSettings.toBuilder()).build()
+                }
+                Log.d(TAG, "updateSettings: success")
+                Result.success(Unit)
+            } catch (e: IOException) {
+                Log.e(TAG, "IO Error updating settings", e)
+                Result.failure(e)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error updating settings", e)
+                Result.failure(e)
             }
-            Log.d(TAG, "updateSettings: success")
-            Result.success(Unit)
-        } catch (e: IOException) {
-            Log.e(TAG, "IO Error updating settings", e)
-            Result.failure(e)
-        } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error updating settings", e)
-            Result.failure(e)
         }
     }
     
@@ -257,31 +265,28 @@ class DefaultDataStoreRepository @Inject constructor(
         val threadName = Thread.currentThread().name
         Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] START on thread: $threadName")
 
-        return try {
-            // Check available storage before write
-            val dataStoreFile = java.io.File(android.os.Environment.getDataDirectory(), "data/${android.os.Process.myUid()}/files/datastore/user_data.pb")
-            val freeSpace = dataStoreFile.parentFile?.freeSpace ?: -1
-            Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Free space: ${freeSpace / 1024}KB, DataStore file exists: ${dataStoreFile.exists()}")
-
-            Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Calling updateData...")
-            userDataDataStore.updateData { currentUserData ->
-                Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Inside updateData callback, current data: onboardingCompleted=${currentUserData.onboardingCompleted}, selectedModelType=${currentUserData.selectedModelType}")
-                val builder = currentUserData.toBuilder()
-                val result = transform(builder).build()
-                Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Transformed data: onboardingCompleted=${result.onboardingCompleted}, selectedModelType=${result.selectedModelType}")
-                result
+        return userDataMutex.withLock {
+            try {
+                Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Acquired mutex, calling updateData...")
+                userDataDataStore.updateData { currentUserData ->
+                    Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Inside updateData callback, current data: onboardingCompleted=${currentUserData.onboardingCompleted}, selectedModelType=${currentUserData.selectedModelType}")
+                    val builder = currentUserData.toBuilder()
+                    val result = transform(builder).build()
+                    Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Transformed data: onboardingCompleted=${result.onboardingCompleted}, selectedModelType=${result.selectedModelType}")
+                    result
+                }
+                Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] SUCCESS")
+                Result.success(Unit)
+            } catch (e: IOException) {
+                Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] IO ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
+                Result.failure(e)
+            } catch (e: IllegalStateException) {
+                Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] ILLEGAL STATE ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
+                Result.failure(e)
+            } catch (e: Exception) {
+                Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] UNEXPECTED ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
+                Result.failure(e)
             }
-            Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] SUCCESS")
-            Result.success(Unit)
-        } catch (e: IOException) {
-            Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] IO ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
-            Result.failure(e)
-        } catch (e: IllegalStateException) {
-            Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] ILLEGAL STATE ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
-            Result.failure(e)
-        } catch (e: Exception) {
-            Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] UNEXPECTED ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
-            Result.failure(e)
         }
     }
 }
