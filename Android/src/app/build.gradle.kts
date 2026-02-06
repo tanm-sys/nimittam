@@ -33,15 +33,28 @@ android {
   }
 
   // Prevent compression of embedded model files
+  // MLC-LLM model weights (.bin), tokenizer (.json), and config files must not be compressed
   androidResources {
-    noCompress += listOf("task")
+    noCompress += listOf("task", "bin", "json", "txt")
   }
 
   buildTypes {
     release {
       isMinifyEnabled = true
       isShrinkResources = true
+      proguardFiles(
+        getDefaultProguardFile("proguard-android-optimize.txt"),
+        "proguard-rules.pro"
+      )
       signingConfig = signingConfigs.getByName("debug")
+    }
+  }
+
+  // Required for large native libraries (112MB libtvm4j_runtime_packed.so)
+  // Android 12+ defaults to extractNativeLibs=false which can cause loading issues
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
     }
   }
 
@@ -50,28 +63,14 @@ android {
     abi {
       isEnable = true
       reset()
-      include("arm64-v8a", "armeabi-v7a", "x86_64")
-      isUniversalApk = true
-    }
-  }
-
-  // Native build configuration for MLC-LLM
-  externalNativeBuild {
-    cmake {
-      path = file("src/main/cpp/CMakeLists.txt")
-      version = "3.22.1"
+      // Only arm64-v8a is supported by the MLC-LLM prebuilt library
+      include("arm64-v8a")
+      isUniversalApk = false
     }
   }
 
   // NDK configuration for optimal LLM performance
   ndkVersion = "27.2.12479018"
-  
-  defaultConfig {
-    ndk {
-      // Target modern ARM64 devices for best LLM performance
-      abiFilters += listOf("arm64-v8a")
-    }
-  }
 
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -95,6 +94,9 @@ android {
 }
 
 dependencies {
+  // MLC-LLM runtime library
+  implementation(project(":mlc4j"))
+  
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.kotlinx.serialization.json)
@@ -135,6 +137,10 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
 
   testImplementation(libs.junit)
+  testImplementation(libs.robolectric)
+  testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.turbine)
+  testImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(platform(libs.androidx.compose.bom))

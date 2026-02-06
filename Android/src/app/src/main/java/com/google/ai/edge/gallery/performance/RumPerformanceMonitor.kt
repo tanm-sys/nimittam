@@ -141,7 +141,7 @@ data class AnrCrashReport(
  */
 @Singleton
 class RumPerformanceMonitor @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : Application.ActivityLifecycleCallbacks, DefaultLifecycleObserver {
 
     companion object {

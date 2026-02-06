@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -112,8 +112,13 @@ class PromptQueue(
         private const val TAG = "PromptQueue"
     }
     
-    // Internal queue using priority ordering
-    private val queue = ConcurrentLinkedQueue<QueuedPrompt>()
+    // Internal priority queue - higher priority values are dequeued first
+    // Uses a comparator that orders by priority (descending) then by enqueue time (ascending)
+    private val queue = PriorityBlockingQueue<QueuedPrompt>(
+        config.maxSize.coerceAtLeast(11), // Initial capacity (default 11 min)
+        compareByDescending<QueuedPrompt> { it.priority.value }
+            .thenBy { it.enqueueTime }
+    )
     
     // Mutex for queue operations
     private val queueMutex = Mutex()
@@ -247,13 +252,11 @@ class PromptQueue(
      * Remove a specific prompt from the queue.
      */
     suspend fun remove(promptId: String): Boolean = queueMutex.withLock {
-        val iterator = queue.iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next().id == promptId) {
-                iterator.remove()
-                _events.tryEmit(PromptQueueEvent.PromptDropped(promptId, "Explicitly removed"))
-                return true
-            }
+        // Find the prompt first, then remove it
+        val promptToRemove = queue.find { it.id == promptId }
+        if (promptToRemove != null && queue.remove(promptToRemove)) {
+            _events.tryEmit(PromptQueueEvent.PromptDropped(promptId, "Explicitly removed"))
+            return true
         }
         return false
     }
@@ -292,10 +295,10 @@ class PromptQueue(
      */
     suspend fun processAll(
         processor: suspend (QueuedPrompt) -> Flow<GenerationResult>
-    ) = queueMutex.withLock {
+    ): Unit = queueMutex.withLock {
         if (isProcessing.getAndSet(true)) {
             Log.d(TAG, "Processing already in progress")
-            return
+            return@withLock
         }
         
         _events.tryEmit(PromptQueueEvent.ProcessingStarted)
@@ -348,18 +351,9 @@ class PromptQueue(
     }
     
     private fun addWithPriority(prompt: QueuedPrompt) {
-        // For priority queue, we need to insert in the correct position
-        // Since ConcurrentLinkedQueue doesn't support priority ordering directly,
-        // we remove all elements, sort, and re-add
-        if (queue.isEmpty() || prompt.priority == PromptPriority.LOW) {
-            queue.add(prompt)
-        } else {
-            val tempList = queue.toMutableList()
-            tempList.add(prompt)
-            tempList.sortByDescending { it.priority.value }
-            queue.clear()
-            queue.addAll(tempList)
-        }
+        // PriorityBlockingQueue automatically maintains priority ordering
+        // via the comparator provided at construction time
+        queue.add(prompt)
     }
     
     private suspend fun handleOverflow(
@@ -414,19 +408,19 @@ class PromptQueue(
     }
     
     private fun cleanupExpiredPrompts() {
-        val iterator = queue.iterator()
-        var expiredCount = 0
-        while (iterator.hasNext()) {
-            val prompt = iterator.next()
-            if (prompt.isExpired()) {
-                iterator.remove()
-                expiredCount++
+        // Collect expired prompts first to avoid concurrent modification issues
+        // PriorityBlockingQueue's iterator is weakly consistent
+        val expiredPrompts = queue.filter { it.isExpired() }
+        
+        expiredPrompts.forEach { prompt ->
+            if (queue.remove(prompt)) {
                 _events.tryEmit(PromptQueueEvent.PromptExpired(prompt.id, prompt.ageMs()))
                 Log.d(TAG, "Expired prompt removed: ${prompt.id}, age: ${prompt.ageMs()}ms")
             }
         }
-        if (expiredCount > 0) {
-            stats.recordExpired(expiredCount)
+        
+        if (expiredPrompts.isNotEmpty()) {
+            stats.recordExpired(expiredPrompts.size)
         }
     }
     
@@ -493,7 +487,7 @@ class QueueStatistics {
             totalRejected = totalRejected.get(),
             totalErrors = totalErrors.get(),
             totalCleared = totalCleared.get(),
-            averageProcessingTimeMs = if (processed > 0) processingTime.toLong() / processed else 0,
+            averageProcessingTimeMs = if (processed > 0) processingTime / processed else 0,
             successRate = if (dequeued > 0) (processed * 100.0 / dequeued) else 0.0
         )
     }

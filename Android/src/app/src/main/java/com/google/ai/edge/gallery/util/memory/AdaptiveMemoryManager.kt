@@ -84,7 +84,7 @@ data class MemoryStats(
  */
 @Singleton
 class AdaptiveMemoryManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val memoryPoolManager: MemoryPoolManager,
     private val referenceCacheManager: ReferenceCacheManager
 ) {

@@ -1,0 +1,33 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.serialization'
+}
+
+android {
+    namespace 'ai.mlc.mlcllm'
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 31
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['output']
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'output', include: ['*.jar'])
+    implementation 'androidx.core:core-ktx:1.16.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
+}

@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,7 +74,7 @@ fun SplashScreen(
     var showContent by remember { mutableStateOf(false) }
     var showSubtitle by remember { mutableStateOf(false) }
     var showProgress by remember { mutableStateOf(false) }
-    var loadingProgress by remember { mutableStateOf(0f) }
+    var loadingProgress by remember { mutableFloatStateOf(0f) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "splash_animation")
 

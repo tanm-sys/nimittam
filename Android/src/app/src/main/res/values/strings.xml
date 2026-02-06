@@ -13,5 +13,5 @@
     <string name="category_llm">LLM</string>
     <string name="category_experimental">Experimental</string>
     <string name="chat_generic_agent_name">AI Assistant</string>
-    <string name="chat_textinput_placeholder">Type a message...</string>
+    <string name="chat_textinput_placeholder">Type a message\u2026</string>
 </resources>

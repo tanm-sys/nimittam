@@ -37,7 +37,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class EngineLifecycleManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val stateManager: EngineStateManager = EngineStateManager.create(),
     private val promptQueue: PromptQueue = PromptQueue(),
     private val retryPolicy: RetryPolicy = RetryPolicy.DEFAULT
@@ -342,9 +342,7 @@ class EngineLifecycleManager @Inject constructor(
                         ?: return@InitOperation Result.failure(IllegalStateException("Engine not set"))
                     
                     onProgress(50, "Initializing engine...")
-                    val result = runBlocking {
-                        engineInstance.initialize(modelPath, config)
-                    }
+                    val result = engineInstance.initialize(modelPath, config)
                     
                     onProgress(100, "Ready")
                     result

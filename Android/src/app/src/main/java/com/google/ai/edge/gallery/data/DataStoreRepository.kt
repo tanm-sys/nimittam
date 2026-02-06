@@ -8,8 +8,10 @@
 
 package com.google.ai.edge.gallery.data
 
+import android.content.Context
 import android.util.Log
 import androidx.datastore.core.DataStore
+import com.google.ai.edge.gallery.common.OnboardingPreferences
 import com.google.ai.edge.gallery.proto.Settings
 import com.google.ai.edge.gallery.proto.UserData
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +67,9 @@ interface DataStoreRepository {
     suspend fun updateSelectedModelType(modelType: String): Result<Unit>
     suspend fun updateLastConversationId(conversationId: String): Result<Unit>
     suspend fun incrementLaunchCount(): Result<Unit>
+    
+    // Sync from fallback preferences
+    suspend fun syncFromFallbackPreferences(context: Context)
     
     // Get current values
     suspend fun getSettings(): Settings
@@ -287,6 +292,52 @@ class DefaultDataStoreRepository @Inject constructor(
                 Log.e(TAG, "[DIAGNOSTIC] updateUserData[$operationId] UNEXPECTED ERROR: ${e.javaClass.simpleName}: ${e.message}", e)
                 Result.failure(e)
             }
+        }
+    }
+    
+    // ==================== Sync from Fallback Preferences ====================
+    
+    /**
+     * Sync data from SharedPreferences fallback to DataStore.
+     * Called on app startup to migrate fallback data after DataStore becomes available.
+     */
+    override suspend fun syncFromFallbackPreferences(context: Context) {
+        if (!OnboardingPreferences.hasFallbackData(context)) {
+            return
+        }
+        
+        Log.d(TAG, "Syncing fallback preferences to DataStore")
+        
+        try {
+            // Sync model type
+            val fallbackModelType = OnboardingPreferences.getModelType(context)
+            if (fallbackModelType != null) {
+                val result = updateSelectedModelType(fallbackModelType)
+                if (result.isSuccess) {
+                    Log.d(TAG, "Synced model type from fallback: $fallbackModelType")
+                } else {
+                    Log.w(TAG, "Failed to sync model type from fallback")
+                    return // Don't clear fallback if sync failed
+                }
+            }
+            
+            // Sync onboarding completed status
+            if (OnboardingPreferences.isOnboardingCompleted(context)) {
+                val result = completeOnboarding()
+                if (result.isSuccess) {
+                    Log.d(TAG, "Synced onboarding completed status from fallback")
+                } else {
+                    Log.w(TAG, "Failed to sync onboarding status from fallback")
+                    return // Don't clear fallback if sync failed
+                }
+            }
+            
+            // Clear fallback data after successful sync
+            OnboardingPreferences.clear(context)
+            Log.i(TAG, "Successfully synced and cleared fallback preferences")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error syncing from fallback preferences", e)
         }
     }
 }

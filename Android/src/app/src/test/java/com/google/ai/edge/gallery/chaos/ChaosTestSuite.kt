@@ -336,7 +336,7 @@ class NetworkChaosSimulator {
 
 class MemoryChaosSimulator(private val context: Context) {
     
-    fun simulateLowMemory(availableMemoryPercent: Float, block: () -> Unit) {
+    suspend fun simulateLowMemory(availableMemoryPercent: Float, block: suspend () -> Unit) {
         // In real implementation, this would use ActivityManager.MemoryInfo
         block()
     }
@@ -377,13 +377,13 @@ class BatteryChaosSimulator {
     private var batteryPercent = 100
     private var isCharging = false
     
-    fun simulateLowBattery(batteryPercent: Int, block: () -> Unit) {
+    suspend fun simulateLowBattery(batteryPercent: Int, block: suspend () -> Unit) {
         this.batteryPercent = batteryPercent
         this.isCharging = false
         block()
     }
     
-    fun simulateCriticalBattery(batteryPercent: Int, block: () -> Unit) {
+    suspend fun simulateCriticalBattery(batteryPercent: Int, block: suspend () -> Unit) {
         this.batteryPercent = batteryPercent
         this.isCharging = false
         block()
@@ -414,12 +414,12 @@ enum class ThermalAction {
 class ThermalChaosSimulator {
     private var currentAction = ThermalAction.NORMAL
     
-    fun simulateModerateThermal(block: () -> Unit) {
+    suspend fun simulateModerateThermal(block: suspend () -> Unit) {
         currentAction = ThermalAction.REDUCE_SPEED
         block()
     }
     
-    fun simulateSevereThermal(block: () -> Unit) {
+    suspend fun simulateSevereThermal(block: suspend () -> Unit) {
         currentAction = ThermalAction.PAUSE_INFERENCE
         block()
     }

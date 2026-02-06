@@ -17,7 +17,10 @@ import com.google.ai.edge.gallery.common.OfflineMode
 import com.google.ai.edge.gallery.common.SecureStorage
 import com.google.ai.edge.gallery.common.ThermalManager
 import com.google.ai.edge.gallery.data.DataStoreRepository
+import com.google.ai.edge.gallery.llm.EngineLifecycleManager
+import com.google.ai.edge.gallery.llm.ModelAssetExtractor
 import com.google.ai.edge.gallery.llm.ModelManager
+import com.google.ai.edge.gallery.llm.engine.MlcLlmEngine
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +34,8 @@ class GalleryApplication : Application() {
 
   @Inject lateinit var dataStoreRepository: DataStoreRepository
   @Inject lateinit var modelManager: ModelManager
+  @Inject lateinit var engineLifecycleManager: EngineLifecycleManager
+  @Inject lateinit var mlcLlmEngine: MlcLlmEngine
 
   override fun onCreate() {
     super.onCreate()
@@ -44,19 +49,40 @@ class GalleryApplication : Application() {
     // Check for crash recovery
     checkCrashRecovery()
 
-    // Extract bundled LLM model in background with dedicated thread for I/O priority
-    // OPTIMIZATION: Uses a dedicated single-threaded dispatcher for model extraction
-    // to ensure it doesn't compete with other I/O operations and completes quickly
+    // CRITICAL: Register the MLC-LLM engine with the lifecycle manager
+    // This breaks the circular DI dependency by deferring registration
+    mlcLlmEngine.ensureRegistered()
+
+    // Extract bundled MLC-LLM model and initialize engine in background
+    // This is the critical path for app startup with LLM capabilities
     val modelExtractionDispatcher = Dispatchers.IO.limitedParallelism(1)
     CoroutineScope(modelExtractionDispatcher).launch {
         val operationId = java.util.UUID.randomUUID().toString().take(8)
         val threadName = Thread.currentThread().name
-        Log.d(TAG, "[DIAGNOSTIC] GalleryApplication[$operationId] Starting model extraction on thread: $threadName")
+        Log.d(TAG, "[$operationId] Starting model extraction on thread: $threadName")
+        
         try {
-            modelManager.extractBundledModel()
-            Log.d(TAG, "[DIAGNOSTIC] GalleryApplication[$operationId] Model extraction completed")
+            // Step 1: Extract model weights from APK assets to filesystem
+            val modelPath = ModelAssetExtractor.extractModelIfNeeded(
+                context = this@GalleryApplication,
+                onProgress = { progress, message ->
+                    Log.d(TAG, "[$operationId] Extraction progress: $progress% - $message")
+                }
+            )
+            Log.i(TAG, "[$operationId] Model extracted to: $modelPath")
+            
+            // Step 2: Initialize the LLM engine with extracted model
+            Log.i(TAG, "[$operationId] Initializing LLM engine...")
+            val initResult = engineLifecycleManager.initialize(modelPath)
+            
+            initResult.onSuccess {
+                Log.i(TAG, "[$operationId] LLM engine initialized successfully")
+            }.onFailure { error ->
+                Log.e(TAG, "[$operationId] LLM engine initialization failed: ${error.message}", error)
+            }
+            
         } catch (e: Exception) {
-            Log.e(TAG, "[DIAGNOSTIC] GalleryApplication[$operationId] Model extraction failed: ${e.javaClass.simpleName}: ${e.message}", e)
+            Log.e(TAG, "[$operationId] Model setup failed: ${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
   }

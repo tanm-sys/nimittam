@@ -17,15 +17,27 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
+import com.google.ai.edge.gallery.data.DataStoreRepository
 import com.google.ai.edge.gallery.ui.navigation.NimittamNavigation
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    @Inject
+    lateinit var dataStoreRepository: DataStoreRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Sync fallback preferences to DataStore on startup
+        lifecycleScope.launch {
+            dataStoreRepository.syncFromFallbackPreferences(applicationContext)
+        }
 
         // Enable edge-to-edge display
         enableEdgeToEdge()

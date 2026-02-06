@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Reply
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -97,7 +97,7 @@ fun RadialContextMenu(
     val menuItems = remember {
         listOf(
             RadialMenuItem("copy", Icons.Default.ContentCopy, "Copy"),
-            RadialMenuItem("reply", Icons.Default.Reply, "Reply"),
+            RadialMenuItem("reply", Icons.AutoMirrored.Filled.Reply, "Reply"),
             RadialMenuItem("edit", Icons.Default.Edit, "Edit"),
             RadialMenuItem("share", Icons.Default.Share, "Share"),
             RadialMenuItem("delete", Icons.Default.Delete, "Delete"),

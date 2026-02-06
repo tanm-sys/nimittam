@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -206,7 +207,7 @@ fun Modifier.hapticSlider(
     stepSize: Float = 0.1f
 ): Modifier = composed {
     val hapticFeedback = LocalHapticFeedback.current
-    var lastHapticValue by remember { mutableStateOf(0f) }
+    var lastHapticValue by remember { mutableFloatStateOf(0f) }
 
     // This is a marker modifier - actual implementation would need
     // to be integrated with the slider component

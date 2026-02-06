@@ -20,9 +20,6 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -165,7 +162,7 @@ interface PerformanceListener {
  */
 @Singleton
 class PerformanceMonitor @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -510,11 +507,7 @@ fun FrameMetricsTracker(
     screenName: String,
     monitor: PerformanceMonitor
 ) {
-    val view = LocalView.current
-
     DisposableEffect(screenName) {
-        val window = ViewCompat.getWindowInsetsController(view)
-
         // Setup frame callback
         val choreographer = android.view.Choreographer.getInstance()
         val frameCallback = android.view.Choreographer.FrameCallback { frameTimeNanos ->

@@ -504,7 +504,7 @@ class L2DiskCache(
  * Predictive prefetching manager based on user behavior analysis.
  */
 class PredictivePrefetcher @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -614,7 +614,7 @@ class PredictivePrefetcher @Inject constructor(
  */
 @Singleton
 class CacheManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

@@ -31,3 +31,5 @@ dependencyResolutionManagement {
 rootProject.name = "AI Edge Gallery"
 
 include(":app")
+include(":mlc4j")
+project(":mlc4j").projectDir = file("app/mlc4j")

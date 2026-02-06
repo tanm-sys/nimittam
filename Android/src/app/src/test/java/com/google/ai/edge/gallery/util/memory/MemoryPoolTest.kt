@@ -39,7 +39,7 @@ class GenericObjectPoolTest {
         pool = GenericObjectPool(
             config = PoolConfig(maxSize = 3),
             factory = { StringBuilder() },
-            reset = { it.clear() }
+            reset = { it.clear(); true }
         )
     }
 

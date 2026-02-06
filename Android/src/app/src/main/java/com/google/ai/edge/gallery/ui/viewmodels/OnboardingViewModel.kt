@@ -8,14 +8,17 @@
 
 package com.google.ai.edge.gallery.ui.viewmodels
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.ai.edge.gallery.common.OnboardingPreferences
 import com.google.ai.edge.gallery.data.DataStoreRepository
 import com.google.ai.edge.gallery.llm.DownloadProgress
 import com.google.ai.edge.gallery.llm.ModelInfo
 import com.google.ai.edge.gallery.llm.ModelManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,6 +92,7 @@ sealed class OnboardingEvent {
  */
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
+    @param:ApplicationContext private val context: Context,
     private val dataStoreRepository: DataStoreRepository,
     private val modelManager: ModelManager
 ) : ViewModel() {
@@ -116,9 +120,21 @@ class OnboardingViewModel @Inject constructor(
     }
 
     /**
-     * Check if onboarding is already completed
+     * Check if onboarding is already completed.
+     * Also checks SharedPreferences fallback for cases where DataStore failed.
      */
     private fun checkOnboardingStatus() {
+        // First check SharedPreferences fallback (for cases where DataStore failed)
+        if (OnboardingPreferences.isOnboardingCompleted(context)) {
+            Log.d(TAG, "Onboarding already completed (from SharedPreferences fallback)")
+            _uiState.update { it.copy(isOnboardingCompleted = true) }
+            viewModelScope.launch {
+                _events.emit(OnboardingEvent.NavigateToChat)
+            }
+            return
+        }
+        
+        // Then check DataStore
         dataStoreRepository.onboardingCompletedFlow
             .catch { e ->
                 Log.e(TAG, "Error checking onboarding status", e)
@@ -291,6 +307,7 @@ class OnboardingViewModel @Inject constructor(
     /**
      * Save model type with exponential backoff retry logic.
      * Handles transient DataStore initialization failures during first launch.
+     * Falls back to SharedPreferences if DataStore fails.
      */
     private suspend fun saveModelTypeWithRetry(modelType: String): Result<Unit> {
         val operationId = java.util.UUID.randomUUID().toString().take(8)
@@ -336,12 +353,21 @@ class OnboardingViewModel @Inject constructor(
             }
         }
 
-        Log.e(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] ALL ATTEMPTS FAILED, lastException: ${lastException?.javaClass?.simpleName}: ${lastException?.message}")
-        return Result.failure(lastException ?: Exception("Failed to save model type after $MAX_RETRY_ATTEMPTS attempts"))
+        // Fallback to SharedPreferences if DataStore fails
+        Log.w(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] DataStore failed, trying SharedPreferences fallback")
+        return try {
+            OnboardingPreferences.saveModelType(context, modelType)
+            Log.i(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] SUCCESS via SharedPreferences fallback")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "[DIAGNOSTIC] saveModelTypeWithRetry[$operationId] SharedPreferences fallback also failed", e)
+            Result.failure(lastException ?: e)
+        }
     }
     
     /**
      * Complete onboarding with exponential backoff retry logic.
+     * Falls back to SharedPreferences if DataStore fails.
      */
     private suspend fun completeOnboardingWithRetry(): Result<Unit> {
         var lastException: Exception? = null
@@ -381,7 +407,16 @@ class OnboardingViewModel @Inject constructor(
             }
         }
         
-        return Result.failure(lastException ?: Exception("Failed to complete onboarding after $MAX_RETRY_ATTEMPTS attempts"))
+        // Fallback to SharedPreferences if DataStore fails
+        Log.w(TAG, "completeOnboardingWithRetry: DataStore failed, trying SharedPreferences fallback")
+        return try {
+            OnboardingPreferences.setOnboardingCompleted(context, true)
+            Log.i(TAG, "completeOnboardingWithRetry: SUCCESS via SharedPreferences fallback")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "completeOnboardingWithRetry: SharedPreferences fallback also failed", e)
+            Result.failure(lastException ?: e)
+        }
     }
 
     /**
