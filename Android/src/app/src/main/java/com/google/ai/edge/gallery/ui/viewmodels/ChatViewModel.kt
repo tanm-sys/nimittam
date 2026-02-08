@@ -157,20 +157,29 @@ class ChatViewModel @Inject constructor(
         lifecycleManager.stateFlow
             .onEach { state ->
                 Log.d(TAG, "Engine state changed: $state")
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
                         engineState = state,
                         isInitializing = state == EngineState.INITIALIZING,
                         canSendMessage = state == EngineState.READY || state == EngineState.INITIALIZING
                     )
                 }
-                
+
+                // Safely emit events with error handling
                 when (state) {
                     EngineState.READY -> {
-                        _events.emit(ChatEvent.EngineReady)
+                        try {
+                            _events.emit(ChatEvent.EngineReady)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to emit EngineReady event", e)
+                        }
                     }
                     EngineState.ERROR -> {
-                        _events.emit(ChatEvent.ShowError("Engine initialization failed. Please try again."))
+                        try {
+                            _events.emit(ChatEvent.ShowError("Engine initialization failed. Please try again."))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to emit error event", e)
+                        }
                     }
                     else -> { /* No specific action for other states */ }
                 }
@@ -195,10 +204,14 @@ class ChatViewModel @Inject constructor(
                                 initializationMessage = progress.message
                             )
                         }
-                        _events.emit(ChatEvent.ShowInitializationProgress(
-                            progress.percentage,
-                            progress.message
-                        ))
+                        try {
+                            _events.emit(ChatEvent.ShowInitializationProgress(
+                                progress.percentage,
+                                progress.message
+                            ))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to emit initialization progress event", e)
+                        }
                     }
                     is InitializationProgress.Complete -> {
                         _uiState.update {
@@ -387,9 +400,9 @@ class ChatViewModel @Inject constructor(
                 if (!lifecycleManager.canAcceptPrompts()) {
                     if (lifecycleManager.shouldQueuePrompts()) {
                         // Engine is initializing, prompt will be queued
-                        _events.emit(ChatEvent.ShowError("Engine is initializing. Your message will be processed shortly."))
+                        safeEmitEvent(ChatEvent.ShowError("Engine is initializing. Your message will be processed shortly."))
                     } else {
-                        _events.emit(ChatEvent.ShowError("Engine is not ready. Please wait or restart the app."))
+                        safeEmitEvent(ChatEvent.ShowError("Engine is not ready. Please wait or restart the app."))
                         return@launch
                     }
                 }
@@ -398,16 +411,20 @@ class ChatViewModel @Inject constructor(
                 _uiState.update { it.copy(inputText = "", errorMessage = null) }
 
                 // Create conversation if needed
-                if (currentConversation == null) {
+                val conversation = if (currentConversation == null) {
                     val title = messageText.take(30) + if (messageText.length > 30) "..." else ""
-                    currentConversation = chatHistoryRepository.createConversation(
+                    val newConversation = chatHistoryRepository.createConversation(
                         title = title,
                         modelName = _uiState.value.modelName
                     )
+                    currentConversation = newConversation
                     _uiState.update { 
-                        it.copy(currentConversationId = currentConversation!!.id) 
+                        it.copy(currentConversationId = newConversation.id) 
                     }
-                    dataStoreRepository.updateLastConversationId(currentConversation!!.id)
+                    dataStoreRepository.updateLastConversationId(newConversation.id)
+                    newConversation
+                } else {
+                    currentConversation!!
                 }
 
                 // Add user message to UI
@@ -418,11 +435,12 @@ class ChatViewModel @Inject constructor(
                 _uiState.update { state ->
                     state.copy(messages = state.messages + userMessage)
                 }
-                _events.emit(ChatEvent.ScrollToBottom)
+                safeEmitEvent(ChatEvent.ScrollToBottom)
 
-                // Persist user message
+                // Persist user message - use the captured conversation reference
+                // This avoids race conditions where currentConversation could become null
                 chatHistoryRepository.addMessage(
-                    conversationId = currentConversation!!.id,
+                    conversationId = conversation.id,
                     content = messageText,
                     isUser = true
                 )
@@ -435,8 +453,21 @@ class ChatViewModel @Inject constructor(
                 _uiState.update { state ->
                     state.copy(errorMessage = "Failed to send message")
                 }
-                _events.emit(ChatEvent.ShowError("Failed to send message"))
+                safeEmitEvent(ChatEvent.ShowError("Failed to send message"))
             }
+        }
+    }
+
+    /**
+     * Safely emit an event to the events flow.
+     * Wraps emit in try-catch to prevent crashes if no collector is present.
+     */
+    private suspend fun safeEmitEvent(event: ChatEvent) {
+        try {
+            _events.emit(event)
+        } catch (e: Exception) {
+            // Log but don't crash if there's no collector
+            Log.w(TAG, "Failed to emit event $event: ${e.message}")
         }
     }
 
@@ -502,7 +533,7 @@ class ChatViewModel @Inject constructor(
                                 errorMessage = "Generation failed"
                             )
                         }
-                        _events.emit(ChatEvent.ShowError("Failed to generate response"))
+                        safeEmitEvent(ChatEvent.ShowError("Failed to generate response"))
                     }
                     .collect { result ->
                         when (result) {
@@ -520,13 +551,20 @@ class ChatViewModel @Inject constructor(
                                 }
                             }
                             is GenerationResult.Complete -> {
-                                // Persist AI response
-                                currentConversation?.let { convo ->
-                                    chatHistoryRepository.addMessage(
-                                        conversationId = convo.id,
-                                        content = fullResponse,
-                                        isUser = false
-                                    )
+                                // Persist AI response - capture conversation reference to avoid race condition
+                                val conversation = currentConversation
+                                if (conversation != null) {
+                                    try {
+                                        chatHistoryRepository.addMessage(
+                                            conversationId = conversation.id,
+                                            content = fullResponse,
+                                            isUser = false
+                                        )
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to persist AI response", e)
+                                    }
+                                } else {
+                                    Log.w(TAG, "Cannot persist AI response - conversation is null")
                                 }
 
                                 _uiState.update { state ->
@@ -542,7 +580,7 @@ class ChatViewModel @Inject constructor(
                                         isGenerating = false
                                     )
                                 }
-                                _events.emit(ChatEvent.ResponseComplete(aiMessage.id))
+                                safeEmitEvent(ChatEvent.ResponseComplete(aiMessage.id))
                             }
                             is GenerationResult.Error -> {
                                 _uiState.update { state ->
@@ -561,7 +599,7 @@ class ChatViewModel @Inject constructor(
                                         errorMessage = result.message
                                     )
                                 }
-                                _events.emit(ChatEvent.ShowError(result.message))
+                                safeEmitEvent(ChatEvent.ShowError(result.message))
                             }
                         }
                     }
@@ -578,7 +616,7 @@ class ChatViewModel @Inject constructor(
                         errorMessage = "Failed to generate response"
                     )
                 }
-                _events.emit(ChatEvent.ShowError("Failed to generate response"))
+                safeEmitEvent(ChatEvent.ShowError("Failed to generate response"))
             }
         }
     }

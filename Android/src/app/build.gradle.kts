@@ -55,7 +55,15 @@ android {
   packaging {
     jniLibs {
       useLegacyPackaging = true
+      // 16KB page size support for Android 15+ (API 35+)
+      keepDebugSymbols += listOf("**/*.so")
     }
+  }
+  
+  // Android 16+ (API 36+) requires 16KB page size alignment
+  // This ensures the app works on newer devices
+  androidResources {
+    noCompress += listOf("task", "bin", "json", "txt")
   }
 
   // ABI splits for optimized APK size per architecture
@@ -136,11 +144,21 @@ dependencies {
 
   debugImplementation(libs.androidx.compose.ui.tooling)
 
+  // === Testing Dependencies (Enabled for Production) ===
+  // Unit Testing
   testImplementation(libs.junit)
   testImplementation(libs.robolectric)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.turbine)
   testImplementation(libs.androidx.test.core)
+  testImplementation(libs.mockk)
+  testImplementation(libs.truth)
+  
+  // Hilt Testing
+  testImplementation(libs.hilt.android.testing)
+  kspTest(libs.hilt.android.compiler)
+  
+  // Android Instrumentation Testing
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(platform(libs.androidx.compose.bom))

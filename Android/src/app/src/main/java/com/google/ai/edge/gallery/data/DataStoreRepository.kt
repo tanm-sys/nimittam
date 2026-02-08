@@ -101,7 +101,9 @@ class DefaultDataStoreRepository @Inject constructor(
     
     // Mutex to serialize write operations and prevent concurrent modification issues
     private val settingsMutex = Mutex()
-    private val userDataMutex = Mutex()
+    // Single unified mutex to serialize all userData write operations and prevent race conditions
+    // This ensures exclusive access to userData write operations (user_data.pb file)
+    private val userDataWriteMutex = Mutex()
     
     // ==================== Settings Flows ====================
     
@@ -270,7 +272,7 @@ class DefaultDataStoreRepository @Inject constructor(
         val threadName = Thread.currentThread().name
         Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] START on thread: $threadName")
 
-        return userDataMutex.withLock {
+        return userDataWriteMutex.withLock {
             try {
                 Log.d(TAG, "[DIAGNOSTIC] updateUserData[$operationId] Acquired mutex, calling updateData...")
                 userDataDataStore.updateData { currentUserData ->

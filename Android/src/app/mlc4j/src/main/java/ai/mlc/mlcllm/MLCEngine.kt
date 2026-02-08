@@ -6,6 +6,7 @@ import ai.mlc.mlcllm.OpenAIProtocol.ChatCompletionStreamResponse
 import ai.mlc.mlcllm.OpenAIProtocol.ChatTool
 import ai.mlc.mlcllm.OpenAIProtocol.ResponseFormat
 import ai.mlc.mlcllm.OpenAIProtocol.StreamOptions
+import android.util.Log
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -26,36 +27,64 @@ class BackgroundWorker(private val task: () -> Unit) {
     }
 }
 
+class MLCEngineException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
 class MLCEngine {
 
-    private val state: EngineState
-    private val jsonFFIEngine: JSONFFIEngine
-    val chat: Chat
+    companion object {
+        private const val TAG = "MLCEngine"
+        
+        init {
+            // Ensure native library is loaded before any JNI calls
+            try {
+                System.loadLibrary("tvm4j_runtime_packed")
+                Log.i(TAG, "Native library loaded successfully")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to load native library", e)
+                throw MLCEngineException("Failed to load native library", e)
+            }
+        }
+    }
+
+    private var state: EngineState? = null
+    private var jsonFFIEngine: JSONFFIEngine? = null
+    var chat: Chat? = null
+        private set
     private val threads = mutableListOf<BackgroundWorker>()
 
     init {
-        state = EngineState()
-        jsonFFIEngine = JSONFFIEngine()
-        chat = Chat(jsonFFIEngine, state)
+        try {
+            Log.i(TAG, "Creating MLCEngine...")
+            state = EngineState()
+            Log.i(TAG, "EngineState created")
+            
+            jsonFFIEngine = JSONFFIEngine()
+            Log.i(TAG, "JSONFFIEngine created")
+            
+            chat = Chat(jsonFFIEngine!!, state!!)
+            Log.i(TAG, "Chat created")
 
-        jsonFFIEngine.initBackgroundEngine { result ->
-            state.streamCallback(result)
+            jsonFFIEngine?.initBackgroundEngine { result ->
+                state?.streamCallback(result)
+            }
+
+            val backgroundWorker = BackgroundWorker {
+                Thread.currentThread().priority = Thread.MAX_PRIORITY
+                jsonFFIEngine?.runBackgroundLoop()
+            }
+
+            val backgroundStreamBackWorker = BackgroundWorker {
+                jsonFFIEngine?.runBackgroundStreamBackLoop()
+            }
+
+            threads.add(backgroundWorker)
+            threads.add(backgroundStreamBackWorker)
+
+            backgroundWorker.start()
+            backgroundStreamBackWorker.start()
+        } catch (e: Exception) {
+            throw MLCEngineException("Failed to initialize MLCEngine", e)
         }
-
-        val backgroundWorker = BackgroundWorker {
-            Thread.currentThread().priority = Thread.MAX_PRIORITY
-            jsonFFIEngine.runBackgroundLoop()
-        }
-
-        val backgroundStreamBackWorker = BackgroundWorker {
-            jsonFFIEngine.runBackgroundStreamBackLoop()
-        }
-
-        threads.add(backgroundWorker)
-        threads.add(backgroundStreamBackWorker)
-
-        backgroundWorker.start()
-        backgroundStreamBackWorker.start()
     }
 
     fun reload(modelPath: String, modelLib: String) {
@@ -66,15 +95,15 @@ class MLCEngine {
                 "mode": "interactive"
             }
         """
-        jsonFFIEngine.reload(engineConfig)
+        jsonFFIEngine?.reload(engineConfig)
     }
 
     fun reset() {
-        jsonFFIEngine.reset()
+        jsonFFIEngine?.reset()
     }
 
     fun unload() {
-        jsonFFIEngine.unload()
+        jsonFFIEngine?.unload()
     }
 }
 

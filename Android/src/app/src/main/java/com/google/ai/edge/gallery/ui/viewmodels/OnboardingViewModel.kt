@@ -101,10 +101,11 @@ class OnboardingViewModel @Inject constructor(
         private const val TAG = "OnboardingViewModel"
         private const val LITE_MODEL_PATH = "qwen2.5-0.5b"
         
-        // Retry configuration
-        private const val MAX_RETRY_ATTEMPTS = 3
-        private const val INITIAL_RETRY_DELAY_MS = 100L
-        private const val MAX_RETRY_DELAY_MS = 1000L
+        // Retry configuration - Enhanced for filesystem stability
+        private const val MAX_RETRY_ATTEMPTS = 5
+        private const val INITIAL_RETRY_DELAY_MS = 500L
+        private const val MAX_RETRY_DELAY_MS = 5000L
+        private const val INTER_WRITE_DELAY_MS = 200L  // Delay between consecutive DataStore writes
     }
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -269,6 +270,9 @@ class OnboardingViewModel @Inject constructor(
                 }
                 
                 Log.d(TAG, "Successfully saved model type: ${selectedModel.name}")
+
+                // Allow filesystem to complete the write before next operation
+                delay(INTER_WRITE_DELAY_MS)
 
                 // Mark onboarding as completed with retry logic
                 Log.d(TAG, "Attempting to complete onboarding")

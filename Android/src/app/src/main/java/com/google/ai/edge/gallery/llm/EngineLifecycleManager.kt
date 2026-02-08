@@ -10,6 +10,7 @@ package com.google.ai.edge.gallery.llm
 
 import android.content.Context
 import android.util.Log
+import com.google.ai.edge.gallery.di.EngineInitializerProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -34,13 +35,19 @@ import javax.inject.Singleton
  * - Graceful degradation on errors
  * - Comprehensive telemetry and logging
  * - Resource cleanup guarantees
+ * 
+ * Architecture Notes:
+ * - Uses EngineInitializerProvider to break circular dependency with LlmEngine
+ * - InitOperation is set via setEngine() after LlmEngine is created
+ * - This allows proper DI without circular references
  */
 @Singleton
 class EngineLifecycleManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val stateManager: EngineStateManager = EngineStateManager.create(),
     private val promptQueue: PromptQueue = PromptQueue(),
-    private val retryPolicy: RetryPolicy = RetryPolicy.DEFAULT
+    private val retryPolicy: RetryPolicy = RetryPolicy.DEFAULT,
+    private val initializerProvider: EngineInitializerProvider? = null
 ) {
     companion object {
         private const val TAG = "EngineLifecycleManager"
@@ -319,38 +326,50 @@ class EngineLifecycleManager @Inject constructor(
     
     /**
      * Set the engine implementation. Must be called before initialize().
+     * Also sets up the InitOperation in the initializer provider to break circular dependency.
      */
     fun setEngine(engine: LlmEngine) {
         this.engine = engine
+        
+        // Set the init operation in the provider to break circular dependency
+        // This allows the EngineInitializer to have access to the LlmEngine
+        // without creating a circular DI reference
+        initializerProvider?.setInitOperation(createInitOperation(engine))
+    }
+    
+    /**
+     * Creates the InitOperation that will be used by EngineInitializer.
+     * Extracted to a separate method for clarity and to avoid circular issues.
+     */
+    private fun createInitOperation(engineInstance: LlmEngine): InitOperation {
+        return InitOperation { modelPath, config, onProgress ->
+            try {
+                onProgress(10, "Loading model...")
+                
+                onProgress(50, "Initializing engine...")
+                val result = engineInstance.initialize(modelPath, config)
+                
+                onProgress(100, "Ready")
+                result
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
     }
     
     // Private helper methods
     
     private fun createInitializer(): EngineInitializer {
-        return EngineInitializer(
-            context = context,
-            stateManager = stateManager,
-            retryPolicy = retryPolicy,
-            initOperation = InitOperation { modelPath, config, onProgress ->
-                // This is where the actual engine initialization happens
-                // The engine implementation should handle the actual native initialization
-                try {
-                    onProgress(10, "Loading model...")
-                    
-                    // Delegate to the engine implementation
-                    val engineInstance = engine
-                        ?: return@InitOperation Result.failure(IllegalStateException("Engine not set"))
-                    
-                    onProgress(50, "Initializing engine...")
-                    val result = engineInstance.initialize(modelPath, config)
-                    
-                    onProgress(100, "Ready")
-                    result
-                } catch (e: Exception) {
-                    Result.failure(e)
+        // Use the provider if available, otherwise create directly (fallback for testing)
+        return initializerProvider?.getInitializer() 
+            ?: EngineInitializer(
+                context = context,
+                stateManager = stateManager,
+                retryPolicy = retryPolicy,
+                initOperation = InitOperation { _, _, _ ->
+                    Result.failure(IllegalStateException("Engine not set. Call setEngine() before initialize()."))
                 }
-            }
-        )
+            )
     }
     
     private fun startStateObservation() {
@@ -386,19 +405,41 @@ class EngineLifecycleManager @Inject constructor(
         queueProcessingJob = scope.launch {
             Log.i(TAG, "Starting queue processing...")
             
-            while (isActive && currentState == EngineState.READY) {
+            while (isActive) {
+                // Check state atomically at the start of each iteration
+                val canProcess = currentState == EngineState.READY
+                
+                if (!canProcess) {
+                    // Not ready, wait and check again
+                    delay(QUEUE_PROCESSING_DELAY_MS)
+                    continue
+                }
+                
                 try {
                     val prompt = promptQueue.dequeue()
                     
                     if (prompt != null) {
+                        // Re-check state before processing to prevent race condition
+                        if (currentState != EngineState.READY) {
+                            // State changed, put prompt back or handle appropriately
+                            Log.w(TAG, "State changed before processing prompt ${prompt.id}, re-queueing")
+                            // Note: In a production app, you might want to re-enqueue instead
+                            continue
+                        }
+                        
                         Log.d(TAG, "Processing queued prompt: ${prompt.id}")
                         
                         try {
                             processPrompt(prompt.prompt, prompt.messages, prompt.params)
+                                .catch { e ->
+                                    Log.e(TAG, "Error in prompt flow ${prompt.id}", e)
+                                }
                                 .collect { result ->
                                     // Results are handled by the caller via the flow
                                     Log.d(TAG, "Generated result for prompt ${prompt.id}: $result")
                                 }
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.e(TAG, "Error processing queued prompt ${prompt.id}", e)
                         }

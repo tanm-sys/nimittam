@@ -110,7 +110,7 @@ class ModelManager @Inject constructor(
     suspend fun extractBundledModel() = withContext(Dispatchers.IO) {
         val operationId = java.util.UUID.randomUUID().toString().take(8)
         val threadName = Thread.currentThread().name
-        val bundledModelName = "qwen2.5-0.5b"
+        val bundledModelName = ModelAssetExtractor.MODEL_ID  // Use consistent model name from extractor
         val targetDir = File(modelsDir, bundledModelName)
 
         Log.d(TAG, "[DIAGNOSTIC] extractBundledModel[$operationId] START on thread: $threadName")

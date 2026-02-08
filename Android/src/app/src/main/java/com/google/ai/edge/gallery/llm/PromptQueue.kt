@@ -339,6 +339,9 @@ class PromptQueue(
      */
     fun release() {
         stopAccepting()
+        // Close the channel to stop any pending receives
+        processChannel.close()
+        // Cancel the scope to stop all coroutines
         scope.cancel()
         queue.clear()
         Log.d(TAG, "PromptQueue released")

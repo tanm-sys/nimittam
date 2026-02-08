@@ -10,18 +10,24 @@ package com.google.ai.edge.gallery.data.cache
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import android.util.LruCache
 import androidx.collection.LruCache as CollectionLruCache
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -172,18 +178,21 @@ class L1MemoryCache<T>(maxSize: Int = DEFAULT_MAX_SIZE) {
 
     /**
      * Get current cache size.
+     * Thread-safe: uses synchronized access.
      */
-    fun size(): Int = cache.size()
+    fun size(): Int = synchronized(cache) { cache.size() }
 
     /**
      * Get max cache size.
+     * Thread-safe: uses synchronized access.
      */
-    fun maxSize(): Int = cache.maxSize()
+    fun maxSize(): Int = synchronized(cache) { cache.maxSize() }
 
     /**
      * Get all keys in cache.
+     * Thread-safe: returns a copy of the keys to prevent external modification.
      */
-    fun keys(): Set<String> = cache.snapshot().keys
+    fun keys(): Set<String> = synchronized(cache) { cache.snapshot().keys.toSet() }
 }
 
 /**
@@ -616,6 +625,10 @@ class PredictivePrefetcher @Inject constructor(
 class CacheManager @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) {
+    companion object {
+        private const val TAG = "CacheManager"
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // L1 Memory Cache for general objects
@@ -634,14 +647,47 @@ class CacheManager @Inject constructor(
     private val _stats = MutableStateFlow(CacheManagerStats())
     val stats: StateFlow<CacheManagerStats> = _stats.asStateFlow()
 
+    // Track cleanup job for proper cancellation
+    private var cleanupJob: Job? = null
+
     init {
-        // Periodic cleanup job
-        scope.launch {
-            while (true) {
-                kotlinx.coroutines.delay(60 * 60 * 1000L) // Every hour
-                l2Cache.cleanup()
+        startCleanupJob()
+    }
+
+    /**
+     * Start the periodic cleanup job.
+     * Safe to call multiple times - will cancel any existing job first.
+     */
+    private fun startCleanupJob() {
+        // Cancel any existing job
+        cleanupJob?.cancel()
+
+        cleanupJob = scope.launch {
+            while (isActive) {
+                try {
+                    delay(60 * 60 * 1000L) // Every hour
+                    if (isActive) {
+                        l2Cache.cleanup()
+                    }
+                } catch (e: CancellationException) {
+                    // Normal cancellation, exit the loop
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error during cache cleanup", e)
+                    // Continue to next iteration even on error
+                }
             }
         }
+    }
+
+    /**
+     * Stop the cleanup job and release resources.
+     * Called automatically by the system when the app is destroyed.
+     */
+    fun release() {
+        Log.d(TAG, "Releasing CacheManager resources")
+        cleanupJob?.cancel()
+        scope.cancel()
     }
 
     /**
@@ -663,14 +709,22 @@ class CacheManager @Inject constructor(
 
     /**
      * Get value from cache (L1 -> L2).
+     * Uses safe type checking to prevent ClassCastException.
      */
-    @Suppress("UNCHECKED_CAST")
     suspend fun <T : Serializable> get(key: String): T? {
         // Try L1 first
         l1Cache.get(key)?.let { entry ->
             if (!entry.metadata.isExpired()) {
-                updateStats { copy(totalHits = totalHits + 1) }
-                return entry.value as T
+                @Suppress("UNCHECKED_CAST")
+                val value = entry.value as? T
+                if (value != null) {
+                    updateStats { copy(totalHits = totalHits + 1) }
+                    return value
+                } else {
+                    // Type mismatch - remove invalid entry
+                    Log.w(TAG, "Type mismatch for key $key, removing from L1 cache")
+                    l1Cache.remove(key)
+                }
             }
         }
 

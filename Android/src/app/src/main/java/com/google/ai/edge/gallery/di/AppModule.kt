@@ -23,6 +23,7 @@ import com.google.ai.edge.gallery.UserDataSerializer
 import com.google.ai.edge.gallery.common.HapticFeedbackManager
 import com.google.ai.edge.gallery.data.DataStoreRepository
 import com.google.ai.edge.gallery.data.DefaultDataStoreRepository
+import com.google.ai.edge.gallery.data.PersistenceManager
 import com.google.ai.edge.gallery.llm.ModelManager
 import com.google.ai.edge.gallery.proto.Settings
 import com.google.ai.edge.gallery.proto.UserData
@@ -141,5 +142,15 @@ internal object AppModule {
     @ApplicationContext context: Context,
   ): ModelManager {
     return ModelManager(context)
+  }
+
+  // Provides PersistenceManager for systematic fallback strategy
+  @Provides
+  @Singleton
+  fun providePersistenceManager(
+    @ApplicationContext context: Context,
+    dataStoreRepository: DataStoreRepository,
+  ): PersistenceManager {
+    return PersistenceManager(context, dataStoreRepository)
   }
 }

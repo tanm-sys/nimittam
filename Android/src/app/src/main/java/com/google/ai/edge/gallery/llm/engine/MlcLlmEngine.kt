@@ -11,12 +11,16 @@ package com.google.ai.edge.gallery.llm.engine
 import android.content.Context
 import android.util.Log
 import ai.mlc.mlcllm.MLCEngine
-import ai.mlc.mlcllm.OpenAIProtocol.*
+import ai.mlc.mlcllm.OpenAIProtocol.ChatCompletionMessage
+import ai.mlc.mlcllm.OpenAIProtocol.ChatCompletionRole
+import ai.mlc.mlcllm.OpenAIProtocol.StreamOptions
 import com.google.ai.edge.gallery.llm.*
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -42,19 +46,48 @@ class MlcLlmEngine @Inject constructor(
 
     companion object {
         private const val TAG = "MlcLlmEngine"
-        
+
         // Model configuration from mlc-app-config.json
         private const val MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC"
         private const val MODEL_LIB = "qwen2_q4f16_1_dbc9845947d563a3c13bf93ebf315c83"
+
+        // CRITICAL: Load native TVM/MLC-LLM runtime library
+        @Volatile
+        var isNativeLibraryLoaded = false
+            private set
+
+        init {
+            Log.i(TAG, "Loading native library...")
+            try {
+                System.loadLibrary("tvm4j_runtime_packed")
+                isNativeLibraryLoaded = true
+                Log.i(TAG, "✓ Native library loaded successfully")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "✗ CRITICAL: Failed to load native library", e)
+                Log.e(TAG, "  Error: ${e.message}")
+                Log.e(TAG, "  Cause: Library may be incompatible with this device/architecture")
+                isNativeLibraryLoaded = false
+                // Don't throw - allow app to start and show error
+            } catch (e: Exception) {
+                Log.e(TAG, "✗ CRITICAL: Unexpected error loading native library", e)
+                isNativeLibraryLoaded = false
+            }
+        }
     }
     
     // MLC-LLM Engine instance
     private var mlcEngine: MLCEngine? = null
     
-    // Engine state management
+    // Engine state management - exposed as StateFlow for reactive observation
     private val _state = MutableStateFlow(LlmEngineState.UNINITIALIZED)
     override val state: LlmEngineState
         get() = _state.value
+    
+    /**
+     * Reactive state flow for observing engine state changes.
+     * Use this for UI updates instead of [state] property.
+     */
+    val stateFlow: StateFlow<LlmEngineState> = _state.asStateFlow()
 
     private var _config: LlmEngineConfig = LlmEngineConfig()
     override val config: LlmEngineConfig get() = _config
@@ -66,8 +99,12 @@ class MlcLlmEngine @Inject constructor(
     private var currentGenerationJob: Job? = null
     private val generationScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     
-    // Conversation context
+    // Flag to track if resources have been released
+    private val isReleased = AtomicBoolean(false)
+    
+    // Conversation context - THREAD-SAFE with Mutex
     private val conversationHistory = mutableListOf<ChatCompletionMessage>()
+    private val historyLock = Mutex()
     
     // Initialization tracking
     private val isInitialized = AtomicBoolean(false)
@@ -91,6 +128,14 @@ class MlcLlmEngine @Inject constructor(
     override suspend fun initialize(modelPath: String, config: LlmEngineConfig): Result<Unit> {
         return withContext(Dispatchers.IO) {
             try {
+                // CRITICAL: Check native library is loaded
+                if (!isNativeLibraryLoaded) {
+                    val error = "Native MLC-LLM library not loaded. Cannot initialize engine."
+                    Log.e(TAG, error)
+                    _state.value = LlmEngineState.ERROR
+                    return@withContext Result.failure(IllegalStateException(error))
+                }
+
                 _config = config
                 _state.value = LlmEngineState.LOADING
                 
@@ -119,13 +164,31 @@ class MlcLlmEngine @Inject constructor(
                 
                 currentModelPath = modelPath
                 
-                // Create MLC Engine
-                mlcEngine = MLCEngine()
+                // Create MLC Engine with error handling
+                try {
+                    mlcEngine = MLCEngine()
+                    Log.i(TAG, "MLCEngine created successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to create MLCEngine", e)
+                    _state.value = LlmEngineState.ERROR
+                    return@withContext Result.failure(
+                        IllegalStateException("Failed to initialize MLC engine: ${e.message}", e)
+                    )
+                }
                 
                 // Reload the model with the model path and library
                 // modelPath must be the directory containing mlc-chat-config.json and weight shards
                 // MODEL_LIB is the compiled model library prefix (system://<prefix>)
-                mlcEngine?.reload(modelDir.absolutePath, MODEL_LIB)
+                try {
+                    mlcEngine?.reload(modelDir.absolutePath, MODEL_LIB)
+                    Log.i(TAG, "Model reloaded successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to reload model", e)
+                    _state.value = LlmEngineState.ERROR
+                    return@withContext Result.failure(
+                        IllegalStateException("Failed to load model: ${e.message}", e)
+                    )
+                }
                 
                 isInitialized.set(true)
                 _state.value = LlmEngineState.READY
@@ -168,17 +231,26 @@ class MlcLlmEngine @Inject constructor(
             
             currentGenerationJob = generationScope.launch {
                 try {
-                    // Build message for the API
+                    // Build message for the API - THREAD-SAFE access to history
                     val userMessage = ChatCompletionMessage(
                         role = ChatCompletionRole.user,
                         content = prompt
                     )
-                    
-                    val messages = conversationHistory.toMutableList()
+
+                    val messages = historyLock.withLock {
+                        conversationHistory.toMutableList()
+                    }
                     messages.add(userMessage)
                     
                     // Create streaming chat completion request
-                    val responseChannel = mlcEngine!!.chat.completions.create(
+                    val chat = mlcEngine?.chat
+                    if (chat == null) {
+                        trySend(GenerationResult.Error("Chat not initialized"))
+                        close()
+                        return@launch
+                    }
+                    
+                    val responseChannel = chat.completions.create(
                         messages = messages,
                         temperature = params.temperature,
                         top_p = params.topP,
@@ -229,13 +301,15 @@ class MlcLlmEngine @Inject constructor(
                         }
                     }
                     
-                    // Add assistant response to history
+                    // Add assistant response to history - THREAD-SAFE
                     if (responseBuilder.isNotEmpty()) {
-                        conversationHistory.add(userMessage)
-                        conversationHistory.add(ChatCompletionMessage(
-                            role = ChatCompletionRole.assistant,
-                            content = responseBuilder.toString()
-                        ))
+                        historyLock.withLock {
+                            conversationHistory.add(userMessage)
+                            conversationHistory.add(ChatCompletionMessage(
+                                role = ChatCompletionRole.assistant,
+                                content = responseBuilder.toString()
+                            ))
+                        }
                     }
                     
                     // Calculate final metrics if not provided by API
@@ -273,20 +347,24 @@ class MlcLlmEngine @Inject constructor(
     override fun chat(messages: List<ChatMessage>, params: GenerationParams): Flow<GenerationResult> {
         // Convert ChatMessage to OpenAI format and generate
         val prompt = messages.lastOrNull { it.role == ChatRole.USER }?.content ?: ""
-        
-        // Add system and previous messages to conversation history
-        conversationHistory.clear()
-        messages.forEach { msg ->
-            val role = when (msg.role) {
-                ChatRole.SYSTEM -> ChatCompletionRole.system
-                ChatRole.USER -> ChatCompletionRole.user
-                ChatRole.ASSISTANT -> ChatCompletionRole.assistant
-            }
-            if (msg.role != ChatRole.USER || msg != messages.last()) {
-                conversationHistory.add(ChatCompletionMessage(role = role, content = msg.content))
+
+        // Add system and previous messages to conversation history - THREAD-SAFE
+        runBlocking(Dispatchers.IO) {
+            historyLock.withLock {
+                conversationHistory.clear()
+                messages.forEach { msg ->
+                    val role = when (msg.role) {
+                        ChatRole.SYSTEM -> ChatCompletionRole.system
+                        ChatRole.USER -> ChatCompletionRole.user
+                        ChatRole.ASSISTANT -> ChatCompletionRole.assistant
+                    }
+                    if (msg.role != ChatRole.USER || msg != messages.last()) {
+                        conversationHistory.add(ChatCompletionMessage(role = role, content = msg.content))
+                    }
+                }
             }
         }
-        
+
         return generate(prompt, params)
     }
 
@@ -298,24 +376,50 @@ class MlcLlmEngine @Inject constructor(
     override suspend fun resetContext() {
         withContext(Dispatchers.IO) {
             mlcEngine?.reset()
-            conversationHistory.clear()
+            historyLock.withLock {
+                conversationHistory.clear()
+            }
             Log.d(TAG, "Context reset")
         }
     }
 
     override suspend fun release() {
+        // Prevent double-release
+        if (!isReleased.compareAndSet(false, true)) {
+            Log.w(TAG, "Engine already released, skipping release()")
+            return
+        }
+        
+        Log.i(TAG, "Releasing MLC-LLM engine...")
+        
+        // Cancel all generation jobs first
+        currentGenerationJob?.cancelAndJoin()
+        currentGenerationJob = null
+        
+        // Cancel the generation scope to prevent any new coroutines
         generationScope.cancel()
         
         withContext(Dispatchers.IO) {
             try {
-                currentGenerationJob?.cancelAndJoin()
+                // Unload the model and release native resources
                 mlcEngine?.unload()
                 mlcEngine = null
                 isInitialized.set(false)
                 _state.value = LlmEngineState.RELEASED
-                Log.i(TAG, "MLC-LLM engine released")
+                
+                // Clear conversation history to free memory - THREAD-SAFE
+                historyLock.withLock {
+                    conversationHistory.clear()
+                }
+                currentModelPath = null
+                
+                Log.i(TAG, "MLC-LLM engine released successfully")
+            } catch (e: CancellationException) {
+                // Re-throw cancellation exceptions
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing engine", e)
+                // Don't re-throw to allow cleanup to continue
             }
         }
     }

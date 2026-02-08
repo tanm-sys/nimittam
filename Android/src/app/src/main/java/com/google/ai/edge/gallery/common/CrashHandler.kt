@@ -41,16 +41,22 @@ class CrashHandler private constructor(
         private const val MAX_CRASH_LOGS = 10
         private const val RECOVERY_PREFS = "crash_recovery"
 
+        // Thread-safe atomic flag to prevent multiple installations
+        @Volatile
         private var isInstalled = false
 
         /**
          * Install the global crash handler.
+         * Thread-safe: uses double-checked locking pattern.
          */
         fun install(context: Context) {
             if (isInstalled) return
-            Thread.setDefaultUncaughtExceptionHandler(CrashHandler(context.applicationContext))
-            isInstalled = true
-            Log.d(TAG, "CrashHandler installed")
+            synchronized(this) {
+                if (isInstalled) return
+                Thread.setDefaultUncaughtExceptionHandler(CrashHandler(context.applicationContext))
+                isInstalled = true
+                Log.d(TAG, "CrashHandler installed")
+            }
         }
 
         /**
