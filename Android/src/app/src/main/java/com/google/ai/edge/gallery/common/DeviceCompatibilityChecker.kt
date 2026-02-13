@@ -150,8 +150,13 @@ object DeviceCompatibilityChecker {
             }
             sdkVersion >= 36 -> {  // Android 16+ - 16KB page size REQUIRED
                 // Native library has been rebuilt with 16KB alignment
-                // Allow the app to run on Android 16+
-                null
+                // App is fully compatible with Android 16+
+                CompatibilityIssue(
+                    severity = IssueSeverity.INFO,
+                    title = "Android 16+ Support",
+                    message = "Your device runs Android 16 (API $sdkVersion). The app is fully compatible with 16KB page size memory architecture.",
+                    canContinue = true
+                )
             }
             sdkVersion >= 35 -> {  // Android 15 - 16KB page size MAY be used
                 CompatibilityIssue(

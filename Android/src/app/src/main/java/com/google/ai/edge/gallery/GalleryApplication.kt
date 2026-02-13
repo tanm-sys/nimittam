@@ -66,21 +66,13 @@ class GalleryApplication : Application() {
     CrashHandler.install(this)
     
     Log.i(TAG, "GalleryApplication.onCreate() started")
-    Log.i(TAG, "Android Version: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
+    val sdkVersion = android.os.Build.VERSION.SDK_INT
+    Log.i(TAG, "Android Version: ${android.os.Build.VERSION.RELEASE} (API $sdkVersion)")
     Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
     
-    // TEMPORARY: Skip LLM initialization on Android 16+ due to native library incompatibility
-    // This prevents crashes until a proper Android 16 compatible build is available
-    val sdkVersion = android.os.Build.VERSION.SDK_INT
+    // Log Android 16+ compatibility status
     if (sdkVersion >= 36) {
-      Log.w(TAG, "⚠️ ANDROID 16+ DETECTED - AI features disabled")
-      Log.w(TAG, "  The native AI library is incompatible with Android 16.")
-      Log.w(TAG, "  The app will run in limited mode without AI chat features.")
-      Log.w(TAG, "  Please use Android 15 or earlier for full functionality.")
-      
-      // Still initialize basic managers so app doesn't crash
-      initializeManagers()
-      return
+      Log.i(TAG, "✓ Android 16+ detected - native library supports 16KB page size")
     }
     
     // Check device compatibility before proceeding

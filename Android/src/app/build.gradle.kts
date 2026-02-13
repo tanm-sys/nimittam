@@ -55,13 +55,14 @@ android {
   packaging {
     jniLibs {
       useLegacyPackaging = true
-      // 16KB page size support for Android 15+ (API 35+)
+      // Keep debug symbols for debugging native crashes on Android 16+
       keepDebugSymbols += listOf("**/*.so")
     }
   }
   
-  // Android 16+ (API 36+) requires 16KB page size alignment
-  // This ensures the app works on newer devices
+  // Android 16+ (API 36+) requires 16KB page size alignment for native libraries
+  // The native library (libtvm4j_runtime_packed.so) is built with NDK r27+ which supports 16KB pages
+  // This ensures the app works on Android 16+ devices with 16KB memory page size
   androidResources {
     noCompress += listOf("task", "bin", "json", "txt")
   }

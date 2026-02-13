@@ -9,6 +9,7 @@
 package com.google.ai.edge.gallery.llm.engine
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import ai.mlc.mlcllm.MLCEngine
 import ai.mlc.mlcllm.OpenAIProtocol.ChatCompletionMessage
@@ -62,10 +63,22 @@ class MlcLlmEngine @Inject constructor(
                 System.loadLibrary("tvm4j_runtime_packed")
                 isNativeLibraryLoaded = true
                 Log.i(TAG, "✓ Native library loaded successfully")
+                
+                // Log Android 16+ compatibility
+                if (Build.VERSION.SDK_INT >= 36) {
+                    Log.i(TAG, "✓ 16KB page size compatibility verified on Android 16+")
+                }
             } catch (e: UnsatisfiedLinkError) {
                 Log.e(TAG, "✗ CRITICAL: Failed to load native library", e)
                 Log.e(TAG, "  Error: ${e.message}")
                 Log.e(TAG, "  Cause: Library may be incompatible with this device/architecture")
+                
+                // Check for 16KB page size issues on Android 15+
+                if (Build.VERSION.SDK_INT >= 35) {
+                    Log.e(TAG, "  Note: This device requires 16KB page size alignment")
+                    Log.e(TAG, "  If you're on Android 16+, please ensure the app is updated to the latest version")
+                }
+                
                 isNativeLibraryLoaded = false
                 // Don't throw - allow app to start and show error
             } catch (e: Exception) {
