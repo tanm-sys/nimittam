@@ -33,7 +33,6 @@ import com.google.ai.edge.gallery.ui.theme.AnimationDuration
 import com.google.ai.edge.gallery.ui.theme.FluidSpring
 import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import com.google.ai.edge.gallery.ui.theme.shapeMorphTween
 import kotlinx.coroutines.launch
 
 /**
@@ -55,7 +54,10 @@ fun MorphingProgressIndicator(
     LaunchedEffect(progress) {
         animatedProgress.animateTo(
             targetValue = progress,
-            animationSpec = shapeMorphTween()
+            animationSpec = tween(
+                durationMillis = AnimationDuration.SHAPE_MORPH,
+                easing = MaterialStandardEasing
+            )
         )
     }
 
@@ -64,7 +66,6 @@ fun MorphingProgressIndicator(
         val center = Offset(canvasSize / 2, canvasSize / 2)
         val radius = (canvasSize - strokeWidth) / 2
 
-        // Background circle
         drawCircle(
             color = color.copy(alpha = 0.2f),
             radius = radius,
@@ -72,7 +73,6 @@ fun MorphingProgressIndicator(
             style = Stroke(width = strokeWidth)
         )
 
-        // Progress arc with shape morphing effect
         val sweepAngle = animatedProgress.value * 360f
         drawArc(
             color = color,
@@ -122,7 +122,6 @@ fun AnimatedMorphingRing(
         val canvasSize = size
         val center = Offset(canvasSize / 2, canvasSize / 2)
 
-        // Morph between circle and rounded square
         val baseRadius = (canvasSize - strokeWidth) / 2
         val radiusVariation = baseRadius * 0.1f * kotlin.math.sin(morphProgress * Math.PI.toFloat() * 2)
         val radius = baseRadius + radiusVariation
@@ -134,7 +133,6 @@ fun AnimatedMorphingRing(
             style = Stroke(width = strokeWidth)
         )
 
-        // Rotating accent
         val accentAngle = Math.toRadians(rotation.toDouble())
         val accentX = center.x + kotlin.math.cos(accentAngle).toFloat() * radius
         val accentY = center.y + kotlin.math.sin(accentAngle).toFloat() * radius
@@ -166,7 +164,6 @@ fun ShapeMorphingButton(
 
     Box(
         modifier = modifier
-        // Shape morphing applied via graphics layer in actual implementation
     ) {
         content()
     }
@@ -237,7 +234,6 @@ fun MorphingGeometricShape(
         val centerY = canvasSize / 2
         val radius = canvasSize * 0.4f
 
-        // Interpolate between circle and polygon
         val path = androidx.compose.ui.graphics.Path()
         val actualSides = 3 + (sides - 3) * morphProgress.toInt().coerceIn(3, sides)
 

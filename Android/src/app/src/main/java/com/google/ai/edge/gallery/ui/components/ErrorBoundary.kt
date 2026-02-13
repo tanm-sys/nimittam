@@ -8,7 +8,6 @@
 
 package com.google.ai.edge.gallery.ui.components
 
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -37,19 +35,21 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /**
+ * Error boundary for Compose UI.
+ * Provides a way to catch and display errors gracefully.
+ */
+
+/**
  * Global error handler for Compose UI.
- * Provides a way to catch and handle errors gracefully without crashing the app.
+ * Default behavior is to re-throw errors.
  */
 val LocalErrorHandler = staticCompositionLocalOf<(Throwable) -> Unit> { 
-    { throw it } // Default: re-throw
+    { throw it }
 }
-
-private const val TAG = "ErrorBoundary"
 
 /**
  * Error boundary that catches exceptions from its children.
@@ -68,15 +68,12 @@ fun ErrorBoundary(
     fallback: @Composable (Throwable, () -> Unit) -> Unit = { error, onRetry ->
         DefaultErrorScreen(error = error, onRetry = onRetry)
     },
-    onError: ((Throwable) -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     var error by remember { mutableStateOf<Throwable?>(null) }
     var retryCount by remember { mutableIntStateOf(0) }
     
     val handleError: (Throwable) -> Unit = { throwable ->
-        Log.e(TAG, "Error caught by boundary", throwable)
-        onError?.invoke(throwable)
         error = throwable
     }
     
@@ -87,10 +84,8 @@ fun ErrorBoundary(
     
     CompositionLocalProvider(LocalErrorHandler provides handleError) {
         if (error != null) {
-            // Show fallback UI
             fallback(error!!, retry)
         } else {
-            // Use a key to force recomposition on retry
             androidx.compose.runtime.key(retryCount) {
                 Box(modifier = modifier) {
                     content()
@@ -109,13 +104,6 @@ fun DefaultErrorScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    
-    LaunchedEffect(error) {
-        // Log error
-        Log.e(TAG, "Error in UI", error)
-    }
-    
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -162,24 +150,6 @@ fun DefaultErrorScreen(
             ) {
                 Text("Retry")
             }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Button(
-                onClick = {
-                    // Restart the app
-                    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                    intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary
-                )
-            ) {
-                Text("Restart App")
-            }
         }
     }
 }
@@ -208,9 +178,6 @@ fun ComponentErrorBoundary(
         modifier = modifier,
         fallback = { error, onRetry ->
             fallback(error, onRetry)
-        },
-        onError = { error ->
-            Log.e(TAG, "Error in component: $componentName", error)
         }
     ) {
         content()

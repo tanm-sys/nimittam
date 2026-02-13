@@ -8,7 +8,6 @@
 
 package com.google.ai.edge.gallery.ui.components
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -18,12 +17,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -33,22 +29,21 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.google.ai.edge.gallery.ui.theme.Gray40
 import com.google.ai.edge.gallery.ui.theme.Gray64
-import com.google.ai.edge.gallery.ui.theme.Gray80
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.sin
+import kotlin.random.Random
 
 /**
  * Waveform Components
- * DeepMind style animated waveform
+ * DeepMind style animated waveform visuals
  * M3 expressive shapes
  */
 
 @Composable
 fun AudioWaveform(
     modifier: Modifier = Modifier,
-    amplitudes: List<Float> = List(20) { 0.3f + Math.random().toFloat() * 0.7f },
+    amplitudes: List<Float> = List(20) { 0.3f + Random.nextFloat() * 0.7f },
     color: Color = PureWhite,
     barWidth: Float = 4f,
     barGap: Float = 4f,
@@ -89,7 +84,6 @@ fun AudioWaveform(
             val barHeight = animatedAmplitude * canvasHeight * 0.8f
             val x = i * totalBarWidth + barWidth / 2
 
-            // M3 expressive shape - rounded bars
             drawLine(
                 color = color.copy(alpha = 0.6f + animatedAmplitude * 0.4f),
                 start = Offset(x, centerY - barHeight / 2),
@@ -105,7 +99,6 @@ fun AudioWaveform(
 fun VoiceInputOrb(
     modifier: Modifier = Modifier,
     isListening: Boolean = true,
-    amplitude: Float = 0.5f,
     color: Color = PureWhite
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "orb")
@@ -128,6 +121,17 @@ fun VoiceInputOrb(
             repeatMode = RepeatMode.Restart
         ),
         label = "rotation"
+    )
+
+    // Simulated amplitude for visual effect
+    val amplitude by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "amplitude"
     )
 
     Canvas(modifier = modifier) {
@@ -188,13 +192,11 @@ fun OfflineStatusWaveform(
         val path = Path()
         path.moveTo(0f, centerY)
 
-        // DeepMind style waveform
         val points = 100
         for (i in 0..points) {
             val x = (i / points.toFloat()) * canvasWidth
             val normalizedX = i / points.toFloat()
 
-            // Combine multiple sine waves for complex pattern
             val wave1 = sin(phase + normalizedX * 4 * PI.toFloat())
             val wave2 = sin(phase * 1.5f + normalizedX * 8 * PI.toFloat()) * 0.5f
             val wave3 = sin(phase * 0.5f + normalizedX * 2 * PI.toFloat()) * 0.3f
@@ -209,14 +211,12 @@ fun OfflineStatusWaveform(
             }
         }
 
-        // Draw the waveform
         drawPath(
             path = path,
             color = if (isActive) PureWhite else Gray40,
             style = Stroke(width = 2f, cap = StrokeCap.Round)
         )
 
-        // Draw gradient overlay
         drawRect(
             color = Gray64.copy(alpha = 0.1f),
             size = Size(canvasWidth, canvasHeight)
@@ -226,18 +226,29 @@ fun OfflineStatusWaveform(
 
 @Composable
 fun RealtimeTranscriptionWaveform(
-    modifier: Modifier = Modifier,
-    audioLevel: Float = 0.5f
+    modifier: Modifier = Modifier
 ) {
-    val bars = remember { List(30) { Animatable(0.1f) } }
+    val infiniteTransition = rememberInfiniteTransition(label = "transcription_waveform")
+    
+    // Simulated audio level for visual effect
+    val audioLevel by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(400),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "audio_level"
+    )
 
-    LaunchedEffect(audioLevel) {
-        bars.forEachIndexed { index, animatable ->
-            launch {
-                val targetValue = (audioLevel * (0.5f + Math.random().toFloat() * 0.5f))
-                    .coerceIn(0.1f, 1f)
-                animatable.animateTo(targetValue)
-            }
+    val barCount = 30
+    val barValues = remember(audioLevel) {
+        List(barCount) { index ->
+            // Create wave-like pattern based on index and simulated audio level
+            val position = index / barCount.toFloat()
+            val wave = sin(position * PI.toFloat() * 2)
+            val randomVariation = Random.nextFloat() * 0.3f
+            ((audioLevel * 0.7f + randomVariation) * (0.5f + wave * 0.5f)).coerceIn(0.1f, 1f)
         }
     }
 
@@ -250,20 +261,18 @@ fun RealtimeTranscriptionWaveform(
         val canvasHeight = size.height
         val centerY = canvasHeight / 2
 
-        val barWidth = canvasWidth / (bars.size * 1.5f)
+        val barWidth = canvasWidth / (barCount * 1.5f)
         val gap = barWidth * 0.5f
 
-        bars.forEachIndexed { index, animatable ->
-            val barHeight = animatable.value * canvasHeight * 0.9f
+        barValues.forEachIndexed { index, value ->
+            val barHeight = value * canvasHeight * 0.9f
             val x = index * (barWidth + gap) + barWidth / 2
 
-            // M3 expressive shape
             val topY = centerY - barHeight / 2
             val bottomY = centerY + barHeight / 2
 
-            // Draw rounded bar
             drawLine(
-                color = PureWhite.copy(alpha = 0.6f + animatable.value * 0.4f),
+                color = PureWhite.copy(alpha = 0.6f + value * 0.4f),
                 start = Offset(x, topY),
                 end = Offset(x, bottomY),
                 strokeWidth = barWidth,
@@ -288,5 +297,5 @@ private fun OfflineStatusWaveformPreview() {
 @Preview
 @Composable
 private fun RealtimeTranscriptionWaveformPreview() {
-    RealtimeTranscriptionWaveform(audioLevel = 0.6f)
+    RealtimeTranscriptionWaveform()
 }

@@ -45,7 +45,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,8 +63,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.components.RealtimeTranscriptionWaveform
 import com.google.ai.edge.gallery.ui.theme.AnimationDuration
@@ -73,16 +74,20 @@ import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import com.google.ai.edge.gallery.ui.viewmodels.VoiceInputEvent
-import com.google.ai.edge.gallery.ui.viewmodels.VoiceInputState
-import com.google.ai.edge.gallery.ui.viewmodels.VoiceInputViewModel
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Voice Input Mode Screen
+ * UI State for voice input (mock)
+ */
+enum class VoiceInputState {
+    IDLE, LISTENING, PROCESSING, COMPLETE, ERROR
+}
+
+/**
+ * Voice Input Mode Screen - UI ONLY
  * Full-screen dark canvas
  * Pulsing circle orb morphing to square
  * Waveform with M3 expressive shapes
@@ -92,32 +97,35 @@ import kotlin.math.sin
 @Composable
 fun VoiceInputScreen(
     onDismiss: () -> Unit = {},
-    onComplete: (String) -> Unit = {},
-    viewModel: VoiceInputViewModel = hiltViewModel()
+    onComplete: (String) -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Mock UI state
+    var voiceState by remember { mutableStateOf(VoiceInputState.IDLE) }
+    var audioLevel by remember { mutableFloatStateOf(0f) }
+    var transcription by remember { mutableStateOf("") }
+    var recordingDurationMs by remember { mutableLongStateOf(0L) }
     val hapticFeedback = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Handle events from ViewModel
+    // Auto-start recording simulation when screen opens
     LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is VoiceInputEvent.Dismiss -> onDismiss()
-                is VoiceInputEvent.TranscriptionComplete -> {
-                    onComplete(event.text)
-                }
-                is VoiceInputEvent.ShowError -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
+        delay(500)
+        voiceState = VoiceInputState.LISTENING
+        // Simulate audio level changes
+        while (voiceState == VoiceInputState.LISTENING) {
+            audioLevel = (0.3f + kotlin.random.Random.nextFloat() * 0.5f).coerceIn(0f, 1f)
+            recordingDurationMs += 100
+            delay(100)
+            if (recordingDurationMs > 3000) {
+                voiceState = VoiceInputState.PROCESSING
+                break
             }
         }
-    }
-
-    // Auto-start recording when screen opens
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(500)
-        viewModel.startRecording()
+        delay(1500)
+        transcription = "What's the weather like today?"
+        voiceState = VoiceInputState.COMPLETE
+        delay(1000)
+        onComplete(transcription)
     }
 
     Box(
@@ -142,7 +150,7 @@ fun VoiceInputScreen(
                 onClick = {
                     // Haptic feedback for dismiss (confirmation)
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    viewModel.dismiss()
+                    onDismiss()
                 }
             ) {
                 Icon(
@@ -162,8 +170,8 @@ fun VoiceInputScreen(
         ) {
             // Morphing orb
             MorphingVoiceOrb(
-                state = uiState.state,
-                audioLevel = uiState.audioLevel,
+                state = voiceState,
+                audioLevel = audioLevel,
                 modifier = Modifier.size(200.dp)
             )
 
@@ -171,7 +179,7 @@ fun VoiceInputScreen(
 
             // Status text
             AnimatedContent(
-                targetState = uiState.state,
+                targetState = voiceState,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(300)) togetherWith
                             fadeOut(animationSpec = tween(200))
@@ -196,12 +204,12 @@ fun VoiceInputScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             // Waveform visualization
-            if (uiState.state == VoiceInputState.LISTENING) {
+            if (voiceState == VoiceInputState.LISTENING) {
                 RealtimeTranscriptionWaveform(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 48.dp),
-                    audioLevel = uiState.audioLevel
+                    audioLevel = audioLevel
                 )
             }
 
@@ -209,7 +217,7 @@ fun VoiceInputScreen(
 
             // Transcription text
             AnimatedContent(
-                targetState = uiState.transcription,
+                targetState = transcription,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(400)) togetherWith
                             fadeOut(animationSpec = tween(200))
@@ -228,10 +236,10 @@ fun VoiceInputScreen(
             }
 
             // Recording duration
-            if (uiState.state == VoiceInputState.LISTENING) {
+            if (voiceState == VoiceInputState.LISTENING) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = viewModel.formatDuration(uiState.recordingDurationMs),
+                    text = formatDuration(recordingDurationMs),
                     style = MaterialTheme.typography.labelMedium,
                     color = Gray64
                 )
@@ -244,6 +252,13 @@ fun VoiceInputScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val seconds = durationMs / 1000
+    val minutes = seconds / 60
+    val remainingSeconds = seconds % 60
+    return String.format("%d:%02d", minutes, remainingSeconds)
 }
 
 @Composable

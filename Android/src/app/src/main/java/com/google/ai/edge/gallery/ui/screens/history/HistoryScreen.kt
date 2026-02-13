@@ -58,6 +58,7 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,8 +70,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.theme.AnimationDuration
 import com.google.ai.edge.gallery.ui.theme.Gray12
@@ -82,18 +81,30 @@ import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import com.google.ai.edge.gallery.ui.viewmodels.ConversationCategory
-import com.google.ai.edge.gallery.ui.viewmodels.ConversationUiModel
-import com.google.ai.edge.gallery.ui.viewmodels.HistoryEvent
-import com.google.ai.edge.gallery.ui.viewmodels.HistoryViewModel
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
+import androidx.compose.ui.graphics.Color
 
 /**
- * Conversation History Screen
+ * UI Model for conversation (mock data)
+ */
+enum class ConversationCategory {
+    GENERAL, WORK, CREATIVE, CODE
+}
+
+data class ConversationUiModel(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val preview: String,
+    val timestamp: Long,
+    val category: ConversationCategory = ConversationCategory.GENERAL
+)
+
+/**
+ * Conversation History Screen - UI ONLY
  * Vertical list with 88dp rows
  * Sharp left border indicating category
  * Swipe actions
@@ -105,34 +116,42 @@ import java.util.Locale
 fun HistoryScreen(
     onNavigateBack: () -> Unit = {},
     onNewChat: () -> Unit = {},
-    onConversationClick: (String) -> Unit = {},
-    viewModel: HistoryViewModel = hiltViewModel()
+    onConversationClick: (String) -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Mock conversations data
+    val conversations = remember {
+        mutableStateListOf(
+            ConversationUiModel(
+                title = "Quantum Computing Explained",
+                preview = "Can you explain quantum computing in simple terms? Quantum computing uses quantum bits...",
+                timestamp = System.currentTimeMillis(),
+                category = ConversationCategory.GENERAL
+            ),
+            ConversationUiModel(
+                title = "Python Code Review",
+                preview = "Here's my Python function for sorting. Can you review it and suggest improvements?",
+                timestamp = System.currentTimeMillis() - 86400000,
+                category = ConversationCategory.CODE
+            ),
+            ConversationUiModel(
+                title = "Creative Writing Ideas",
+                preview = "I need some creative writing prompts for a sci-fi short story about time travel.",
+                timestamp = System.currentTimeMillis() - 172800000,
+                category = ConversationCategory.CREATIVE
+            ),
+            ConversationUiModel(
+                title = "Project Planning",
+                preview = "Help me create a project timeline for the upcoming mobile app release.",
+                timestamp = System.currentTimeMillis() - 259200000,
+                category = ConversationCategory.WORK
+            )
+        )
+    }
+    
     val hapticFeedback = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showContent by remember { mutableStateOf(false) }
     var conversationToDelete by remember { mutableStateOf<String?>(null) }
-
-    // Handle events from ViewModel
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is HistoryEvent.NavigateBack -> onNavigateBack()
-                is HistoryEvent.NavigateToNewChat -> onNewChat()
-                is HistoryEvent.NavigateToConversation -> onConversationClick(event.conversationId)
-                is HistoryEvent.ShowError -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is HistoryEvent.ShowSuccess -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is HistoryEvent.ConfirmDelete -> {
-                    conversationToDelete = event.conversationId
-                }
-            }
-        }
-    }
 
     LaunchedEffect(Unit) {
         delay(100)
@@ -155,14 +174,12 @@ fun HistoryScreen(
         ) {
             // Header
             HistoryHeader(
-                onNavigateBack = { viewModel.navigateBack() },
-                onNewChat = { viewModel.createNewChat() }
+                onNavigateBack = onNavigateBack,
+                onNewChat = onNewChat
             )
 
             // Content
-            if (uiState.isLoading) {
-                LoadingState()
-            } else if (uiState.isEmpty) {
+            if (conversations.isEmpty()) {
                 EmptyHistoryState()
             } else {
                 LazyColumn(
@@ -170,7 +187,7 @@ fun HistoryScreen(
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(
-                        items = uiState.filteredConversations,
+                        items = conversations,
                         key = { it.id }
                     ) { conversation ->
                         AnimatedVisibility(
@@ -188,8 +205,8 @@ fun HistoryScreen(
                         ) {
                             SwipeableConversationItem(
                                 conversation = conversation,
-                                onClick = { viewModel.selectConversation(conversation.id) },
-                                onDelete = { viewModel.requestDeleteConversation(conversation.id) }
+                                onClick = { onConversationClick(conversation.id) },
+                                onDelete = { conversationToDelete = conversation.id }
                             )
                         }
                     }
@@ -212,11 +229,11 @@ fun HistoryScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            viewModel.deleteConversation(conversationId)
+                            conversations.removeAll { it.id == conversationId }
                             conversationToDelete = null
                         }
                     ) {
-                        Text("Delete", color = androidx.compose.ui.graphics.Color.Red)
+                        Text("Delete", color = Color.Red)
                     }
                 },
                 dismissButton = {
@@ -338,7 +355,7 @@ private fun SwipeableConversationItem(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Red.copy(alpha = 0.2f))
+                    .background(Color.Red.copy(alpha = 0.2f))
                     .padding(horizontal = 24.dp),
                 contentAlignment = Alignment.CenterEnd
             ) {
@@ -429,7 +446,7 @@ private fun ConversationListItem(
 }
 
 @Composable
-private fun getCategoryColor(category: ConversationCategory): androidx.compose.ui.graphics.Color {
+private fun getCategoryColor(category: ConversationCategory): Color {
     return when (category) {
         ConversationCategory.GENERAL -> PureWhite
         ConversationCategory.WORK -> Gray80

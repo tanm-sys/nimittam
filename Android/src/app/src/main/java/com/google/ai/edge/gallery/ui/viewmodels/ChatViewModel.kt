@@ -8,39 +8,17 @@
 
 package com.google.ai.edge.gallery.ui.viewmodels
 
-import android.util.Log
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.ai.edge.gallery.data.DataStoreRepository
-import com.google.ai.edge.gallery.data.db.entity.ConversationEntity
-import com.google.ai.edge.gallery.data.db.repository.ChatHistoryRepository
-import com.google.ai.edge.gallery.llm.ChatMessage as LlmChatMessage
-import com.google.ai.edge.gallery.llm.ChatRole
-import com.google.ai.edge.gallery.llm.EngineLifecycleManager
-import com.google.ai.edge.gallery.llm.EngineState
-import com.google.ai.edge.gallery.llm.GenerationParams
-import com.google.ai.edge.gallery.llm.GenerationResult
-import com.google.ai.edge.gallery.llm.InitializationProgress
-import com.google.ai.edge.gallery.llm.LlmEngine
-import com.google.ai.edge.gallery.llm.LlmEngineState
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
-import javax.inject.Inject
 
 /**
  * UI state for the Chat screen
@@ -55,12 +33,22 @@ data class ChatUiState(
     val inputText: String = "",
     val canSendMessage: Boolean = true,
     // New fields for initialization state handling
-    val engineState: EngineState = EngineState.UNINITIALIZED,
-    val initializationProgress: Int = 0,
-    val initializationMessage: String? = null,
+    val engineState: EngineState = EngineState.READY,
+    val initializationProgress: Int = 100,
+    val initializationMessage: String? = "Ready",
     val isInitializing: Boolean = false,
     val pendingPromptCount: Int = 0
 )
+
+/**
+ * Engine states for UI display
+ */
+enum class EngineState {
+    UNINITIALIZED,
+    INITIALIZING,
+    READY,
+    ERROR
+}
 
 /**
  * UI model for chat messages
@@ -89,294 +77,60 @@ sealed class ChatEvent {
 
 /**
  * ViewModel for the Chat screen.
- * Manages chat state, LLM inference, and conversation persistence.
- * 
- * Enhanced with EngineLifecycleManager integration for robust initialization handling.
+ * UI-only version with mock data for preview/testing.
  */
-@HiltViewModel
-class ChatViewModel @Inject constructor(
-    private val llmEngine: LlmEngine,
-    private val lifecycleManager: EngineLifecycleManager,
-    private val chatHistoryRepository: ChatHistoryRepository,
-    private val dataStoreRepository: DataStoreRepository,
-    private val savedStateHandle: SavedStateHandle
-) : ViewModel() {
+class ChatViewModel : ViewModel() {
 
-    companion object {
-        private const val TAG = "ChatViewModel"
-        private const val KEY_CONVERSATION_ID = "conversation_id"
-    }
-
-    private val _uiState = MutableStateFlow(ChatUiState())
+    private val _uiState = MutableStateFlow(
+        ChatUiState(
+            messages = listOf(
+                ChatMessageUiModel(
+                    content = "Hello! I'm Nimittam, your offline AI assistant. How can I help you today?",
+                    isUser = false
+                )
+            )
+        )
+    )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private val _events = MutableSharedFlow<ChatEvent>()
     val events: SharedFlow<ChatEvent> = _events.asSharedFlow()
 
-    private var generationJob: Job? = null
-    private var currentConversation: ConversationEntity? = null
-
-    init {
-        // Observe engine state changes
-        observeEngineState()
-        
-        // Observe initialization progress
-        observeInitializationProgress()
-        
-        // Load settings
-        viewModelScope.launch {
-            dataStoreRepository.selectedModelFlow
-                .catch { Log.e(TAG, "Error loading model name", it) }
-                .collect { modelName ->
-                    _uiState.update { it.copy(modelName = modelName) }
-                }
-        }
-
-        // Check for existing conversation ID
-        val conversationId = savedStateHandle.get<String>(KEY_CONVERSATION_ID)
-        if (conversationId != null) {
-            loadConversation(conversationId)
-        } else {
-            // Check for last conversation
-            viewModelScope.launch {
-                val lastId = dataStoreRepository.lastConversationIdFlow.first()
-                if (lastId.isNotEmpty()) {
-                    loadConversation(lastId)
-                } else {
-                    // Start with welcome message
-                    addWelcomeMessage()
-                }
-            }
-        }
-    }
-
     /**
-     * Observe engine state changes and update UI accordingly
-     */
-    private fun observeEngineState() {
-        lifecycleManager.stateFlow
-            .onEach { state ->
-                Log.d(TAG, "Engine state changed: $state")
-                _uiState.update {
-                    it.copy(
-                        engineState = state,
-                        isInitializing = state == EngineState.INITIALIZING,
-                        canSendMessage = state == EngineState.READY || state == EngineState.INITIALIZING
-                    )
-                }
-
-                // Safely emit events with error handling
-                when (state) {
-                    EngineState.READY -> {
-                        try {
-                            _events.emit(ChatEvent.EngineReady)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to emit EngineReady event", e)
-                        }
-                    }
-                    EngineState.ERROR -> {
-                        try {
-                            _events.emit(ChatEvent.ShowError("Engine initialization failed. Please try again."))
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to emit error event", e)
-                        }
-                    }
-                    else -> { /* No specific action for other states */ }
-                }
-            }
-            .catch { e ->
-                Log.e(TAG, "Error observing engine state", e)
-            }
-            .launchIn(viewModelScope)
-    }
-
-    /**
-     * Observe initialization progress updates
-     */
-    private fun observeInitializationProgress() {
-        lifecycleManager.progressFlow
-            .onEach { progress ->
-                when (progress) {
-                    is InitializationProgress.InProgress -> {
-                        _uiState.update {
-                            it.copy(
-                                initializationProgress = progress.percentage,
-                                initializationMessage = progress.message
-                            )
-                        }
-                        try {
-                            _events.emit(ChatEvent.ShowInitializationProgress(
-                                progress.percentage,
-                                progress.message
-                            ))
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to emit initialization progress event", e)
-                        }
-                    }
-                    is InitializationProgress.Complete -> {
-                        _uiState.update {
-                            it.copy(
-                                initializationProgress = 100,
-                                initializationMessage = "Ready",
-                                isInitializing = false
-                            )
-                        }
-                    }
-                    is InitializationProgress.Failed -> {
-                        _uiState.update {
-                            it.copy(
-                                initializationProgress = 0,
-                                initializationMessage = "Failed: ${progress.error.message}",
-                                isInitializing = false
-                            )
-                        }
-                    }
-                    else -> { /* No action for NotStarted */ }
-                }
-            }
-            .catch { e ->
-                Log.e(TAG, "Error observing initialization progress", e)
-            }
-            .launchIn(viewModelScope)
-    }
-
-    /**
-     * Initialize the engine with the specified model.
-     * This should be called when the user selects a model or on app startup.
-     * 
-     * @param modelPath Path to the model file
-     * @return Result of initialization
+     * Initialize the engine - no-op in UI-only mode
      */
     suspend fun initializeEngine(modelPath: String): Result<Unit> {
-        return lifecycleManager.initialize(modelPath)
+        return Result.success(Unit)
     }
 
     /**
-     * Check if the engine is ready to accept prompts.
+     * Check if the engine is ready - always returns true in UI-only mode
      */
-    fun isEngineReady(): Boolean = lifecycleManager.canAcceptPrompts()
+    fun isEngineReady(): Boolean = true
 
     /**
-     * Wait for the engine to be ready.
-     * 
-     * @param timeoutMs Maximum time to wait in milliseconds
-     * @return true if ready, false if timeout
+     * Wait for the engine to be ready - no-op in UI-only mode
      */
-    suspend fun waitForEngineReady(timeoutMs: Long = 30000L): Boolean {
-        return lifecycleManager.waitForReady(timeoutMs)
-    }
+    suspend fun waitForEngineReady(timeoutMs: Long = 30000L): Boolean = true
 
     /**
-     * Add initial welcome message
+     * Load an existing conversation - no-op in UI-only mode
      */
-    private fun addWelcomeMessage() {
-        val welcomeMessage = ChatMessageUiModel(
-            content = "Hello! I'm Nimittam, your offline AI assistant. How can I help you today?",
-            isUser = false
-        )
-        _uiState.update { state ->
-            state.copy(messages = listOf(welcomeMessage))
-        }
-    }
+    fun loadConversation(conversationId: String) { }
 
     /**
-     * Load an existing conversation
-     */
-    fun loadConversation(conversationId: String) {
-        viewModelScope.launch {
-            try {
-                _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-
-                // Load conversation
-                val conversation = chatHistoryRepository.getConversation(conversationId)
-                if (conversation != null) {
-                    currentConversation = conversation
-                    _uiState.update { 
-                        it.copy(
-                            currentConversationId = conversationId,
-                            modelName = conversation.modelName ?: it.modelName
-                        )
-                    }
-
-                    // Load messages
-                    chatHistoryRepository.getMessagesForConversation(conversationId)
-                        .catch { e ->
-                            Log.e(TAG, "Error loading messages", e)
-                            _uiState.update { state ->
-                                state.copy(
-                                    isLoading = false,
-                                    errorMessage = "Failed to load messages"
-                                )
-                            }
-                        }
-                        .collect { messages ->
-                            val uiMessages = messages.map { entity ->
-                                ChatMessageUiModel(
-                                    id = entity.id,
-                                    content = entity.content,
-                                    isUser = entity.isUser,
-                                    timestamp = entity.timestamp,
-                                    isComplete = true
-                                )
-                            }
-                            _uiState.update { state ->
-                                state.copy(
-                                    messages = uiMessages,
-                                    isLoading = false
-                                )
-                            }
-                        }
-                } else {
-                    _uiState.update { state ->
-                        state.copy(
-                            isLoading = false,
-                            errorMessage = "Conversation not found"
-                        )
-                    }
-                    addWelcomeMessage()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading conversation", e)
-                _uiState.update { state ->
-                    state.copy(
-                        isLoading = false,
-                        errorMessage = "Failed to load conversation"
-                    )
-                }
-                addWelcomeMessage()
-            }
-        }
-    }
-
-    /**
-     * Create a new conversation
+     * Create a new conversation - resets to mock state
      */
     fun createNewConversation() {
-        viewModelScope.launch {
-            try {
-                // Cancel any ongoing generation
-                cancelGeneration()
-
-                // Reset context
-                llmEngine.resetContext()
-
-                // Clear current conversation
-                currentConversation = null
-                _uiState.update { 
-                    ChatUiState(
-                        modelName = it.modelName,
-                        currentConversationId = null,
-                        engineState = it.engineState,
-                        initializationProgress = it.initializationProgress,
-                        initializationMessage = it.initializationMessage,
-                        isInitializing = it.isInitializing
+        _uiState.update { 
+            ChatUiState(
+                messages = listOf(
+                    ChatMessageUiModel(
+                        content = "Hello! I'm Nimittam, your offline AI assistant. How can I help you today?",
+                        isUser = false
                     )
-                }
-
-                addWelcomeMessage()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error creating new conversation", e)
-            }
+                )
+            )
         }
     }
 
@@ -388,291 +142,24 @@ class ChatViewModel @Inject constructor(
     }
 
     /**
-     * Send a message and generate AI response
+     * Send a message - no-op in UI-only mode
      */
-    fun sendMessage() {
-        val messageText = _uiState.value.inputText.trim()
-        if (messageText.isEmpty() || _uiState.value.isGenerating) return
-
-        viewModelScope.launch {
-            try {
-                // Check if engine is ready
-                if (!lifecycleManager.canAcceptPrompts()) {
-                    if (lifecycleManager.shouldQueuePrompts()) {
-                        // Engine is initializing, prompt will be queued
-                        safeEmitEvent(ChatEvent.ShowError("Engine is initializing. Your message will be processed shortly."))
-                    } else {
-                        safeEmitEvent(ChatEvent.ShowError("Engine is not ready. Please wait or restart the app."))
-                        return@launch
-                    }
-                }
-
-                // Clear input
-                _uiState.update { it.copy(inputText = "", errorMessage = null) }
-
-                // Create conversation if needed
-                val conversation = if (currentConversation == null) {
-                    val title = messageText.take(30) + if (messageText.length > 30) "..." else ""
-                    val newConversation = chatHistoryRepository.createConversation(
-                        title = title,
-                        modelName = _uiState.value.modelName
-                    )
-                    currentConversation = newConversation
-                    _uiState.update { 
-                        it.copy(currentConversationId = newConversation.id) 
-                    }
-                    dataStoreRepository.updateLastConversationId(newConversation.id)
-                    newConversation
-                } else {
-                    currentConversation!!
-                }
-
-                // Add user message to UI
-                val userMessage = ChatMessageUiModel(
-                    content = messageText,
-                    isUser = true
-                )
-                _uiState.update { state ->
-                    state.copy(messages = state.messages + userMessage)
-                }
-                safeEmitEvent(ChatEvent.ScrollToBottom)
-
-                // Persist user message - use the captured conversation reference
-                // This avoids race conditions where currentConversation could become null
-                chatHistoryRepository.addMessage(
-                    conversationId = conversation.id,
-                    content = messageText,
-                    isUser = true
-                )
-
-                // Generate AI response
-                generateResponse(messageText)
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending message", e)
-                _uiState.update { state ->
-                    state.copy(errorMessage = "Failed to send message")
-                }
-                safeEmitEvent(ChatEvent.ShowError("Failed to send message"))
-            }
-        }
-    }
+    fun sendMessage() { }
 
     /**
-     * Safely emit an event to the events flow.
-     * Wraps emit in try-catch to prevent crashes if no collector is present.
+     * Cancel ongoing generation - no-op in UI-only mode
      */
-    private suspend fun safeEmitEvent(event: ChatEvent) {
-        try {
-            _events.emit(event)
-        } catch (e: Exception) {
-            // Log but don't crash if there's no collector
-            Log.w(TAG, "Failed to emit event $event: ${e.message}")
-        }
-    }
+    fun cancelGeneration() { }
 
     /**
-     * Generate AI response using LLM engine
+     * Retry the last failed message - no-op in UI-only mode
      */
-    private suspend fun generateResponse(userMessage: String) {
-        generationJob = viewModelScope.launch {
-            try {
-                _uiState.update { it.copy(isGenerating = true) }
-
-                // Get generation parameters from settings
-                val temperature = dataStoreRepository.temperatureFlow.first()
-                val maxTokens = dataStoreRepository.maxTokensFlow.first()
-                val topP = dataStoreRepository.topPFlow.first()
-                val topK = dataStoreRepository.topKFlow.first()
-                val repeatPenalty = dataStoreRepository.repeatPenaltyFlow.first()
-
-                val params = GenerationParams(
-                    temperature = temperature,
-                    maxTokens = maxTokens,
-                    topP = topP,
-                    topK = topK,
-                    repeatPenalty = repeatPenalty
-                )
-
-                // Build conversation history
-                val history = _uiState.value.messages.map { msg ->
-                    LlmChatMessage(
-                        role = if (msg.isUser) ChatRole.USER else ChatRole.ASSISTANT,
-                        content = msg.content
-                    )
-                }
-
-                // Add streaming response placeholder
-                val aiMessage = ChatMessageUiModel(
-                    content = "",
-                    isUser = false,
-                    isComplete = false
-                )
-                _uiState.update { state ->
-                    state.copy(messages = state.messages + aiMessage)
-                }
-
-                // Generate response with streaming
-                var fullResponse = ""
-                lifecycleManager.submitPrompt(userMessage, history, params)
-                    .catch { e ->
-                        Log.e(TAG, "Generation error", e)
-                        _uiState.update { state ->
-                            val updatedMessages = state.messages.toMutableList()
-                            val lastIndex = updatedMessages.lastIndex
-                            if (lastIndex >= 0) {
-                                updatedMessages[lastIndex] = updatedMessages[lastIndex].copy(
-                                    content = "Sorry, I encountered an error. Please try again.",
-                                    isComplete = true,
-                                    isError = true
-                                )
-                            }
-                            state.copy(
-                                messages = updatedMessages,
-                                isGenerating = false,
-                                errorMessage = "Generation failed"
-                            )
-                        }
-                        safeEmitEvent(ChatEvent.ShowError("Failed to generate response"))
-                    }
-                    .collect { result ->
-                        when (result) {
-                            is GenerationResult.Token -> {
-                                fullResponse += result.text
-                                _uiState.update { state ->
-                                    val updatedMessages = state.messages.toMutableList()
-                                    val lastIndex = updatedMessages.lastIndex
-                                    if (lastIndex >= 0) {
-                                        updatedMessages[lastIndex] = updatedMessages[lastIndex].copy(
-                                            content = fullResponse
-                                        )
-                                    }
-                                    state.copy(messages = updatedMessages)
-                                }
-                            }
-                            is GenerationResult.Complete -> {
-                                // Persist AI response - capture conversation reference to avoid race condition
-                                val conversation = currentConversation
-                                if (conversation != null) {
-                                    try {
-                                        chatHistoryRepository.addMessage(
-                                            conversationId = conversation.id,
-                                            content = fullResponse,
-                                            isUser = false
-                                        )
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Failed to persist AI response", e)
-                                    }
-                                } else {
-                                    Log.w(TAG, "Cannot persist AI response - conversation is null")
-                                }
-
-                                _uiState.update { state ->
-                                    val updatedMessages = state.messages.toMutableList()
-                                    val lastIndex = updatedMessages.lastIndex
-                                    if (lastIndex >= 0) {
-                                        updatedMessages[lastIndex] = updatedMessages[lastIndex].copy(
-                                            isComplete = true
-                                        )
-                                    }
-                                    state.copy(
-                                        messages = updatedMessages,
-                                        isGenerating = false
-                                    )
-                                }
-                                safeEmitEvent(ChatEvent.ResponseComplete(aiMessage.id))
-                            }
-                            is GenerationResult.Error -> {
-                                _uiState.update { state ->
-                                    val updatedMessages = state.messages.toMutableList()
-                                    val lastIndex = updatedMessages.lastIndex
-                                    if (lastIndex >= 0) {
-                                        updatedMessages[lastIndex] = updatedMessages[lastIndex].copy(
-                                            content = "Sorry, I encountered an error: ${result.message}",
-                                            isComplete = true,
-                                            isError = true
-                                        )
-                                    }
-                                    state.copy(
-                                        messages = updatedMessages,
-                                        isGenerating = false,
-                                        errorMessage = result.message
-                                    )
-                                }
-                                safeEmitEvent(ChatEvent.ShowError(result.message))
-                            }
-                        }
-                    }
-
-            } catch (e: CancellationException) {
-                // Generation was cancelled
-                Log.d(TAG, "Generation cancelled")
-                _uiState.update { it.copy(isGenerating = false) }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error generating response", e)
-                _uiState.update { state ->
-                    state.copy(
-                        isGenerating = false,
-                        errorMessage = "Failed to generate response"
-                    )
-                }
-                safeEmitEvent(ChatEvent.ShowError("Failed to generate response"))
-            }
-        }
-    }
-
-    /**
-     * Cancel ongoing generation
-     */
-    fun cancelGeneration() {
-        generationJob?.cancel()
-        generationJob = null
-        viewModelScope.launch {
-            try {
-                llmEngine.stopGeneration()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error stopping generation", e)
-            }
-        }
-        _uiState.update { it.copy(isGenerating = false) }
-    }
-
-    /**
-     * Retry the last failed message
-     */
-    fun retryLastMessage() {
-        val messages = _uiState.value.messages
-        if (messages.size < 2) return
-
-        // Find last user message
-        val lastUserMessageIndex = messages.indexOfLast { it.isUser }
-        if (lastUserMessageIndex < 0) return
-
-        val lastUserMessage = messages[lastUserMessageIndex]
-
-        // Remove error message if present
-        _uiState.update { state ->
-            val updatedMessages = state.messages
-                .filterIndexed { index, _ -> index != lastUserMessageIndex + 1 }
-                .toMutableList()
-            state.copy(messages = updatedMessages, errorMessage = null)
-        }
-
-        // Retry generation
-        viewModelScope.launch {
-            generateResponse(lastUserMessage.content)
-        }
-    }
+    fun retryLastMessage() { }
 
     /**
      * Clear error message
      */
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        generationJob?.cancel()
     }
 }

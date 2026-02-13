@@ -59,9 +59,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Splash Loading Screen
+ * Splash Loading Screen - UI ONLY
  * Deep black background, animated mesh gradient at 2% opacity
- * Nimittam wordmark with variable font animation (400→700)
+ * Nimittam wordmark with variable font animation (400->700)
  * "Offline Intelligence" in Label Small
  * Circular shape morphing progress indicator
  * 3D hero object floating

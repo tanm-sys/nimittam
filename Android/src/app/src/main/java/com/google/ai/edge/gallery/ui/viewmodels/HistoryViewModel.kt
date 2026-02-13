@@ -8,26 +8,16 @@
 
 package com.google.ai.edge.gallery.ui.viewmodels
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.ai.edge.gallery.data.DataStoreRepository
-import com.google.ai.edge.gallery.data.db.entity.ConversationEntity
-import com.google.ai.edge.gallery.data.db.repository.ChatHistoryRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 /**
  * UI model for conversation list items
@@ -79,76 +69,65 @@ sealed class HistoryEvent {
 
 /**
  * ViewModel for the History screen.
- * Manages conversation list state and operations.
+ * UI-only version with mock data for preview/testing.
  */
-@HiltViewModel
-class HistoryViewModel @Inject constructor(
-    private val chatHistoryRepository: ChatHistoryRepository,
-    private val dataStoreRepository: DataStoreRepository
-) : ViewModel() {
+class HistoryViewModel : ViewModel() {
 
-    companion object {
-        private const val TAG = "HistoryViewModel"
-    }
+    // Mock conversation data for UI display
+    private val mockConversations = listOf(
+        ConversationUiModel(
+            id = "1",
+            title = "Getting started with Nimittam",
+            preview = "Hello! I'm Nimittam, your offline AI assistant...",
+            timestamp = System.currentTimeMillis(),
+            messageCount = 5,
+            isArchived = false,
+            category = ConversationCategory.GENERAL
+        ),
+        ConversationUiModel(
+            id = "2",
+            title = "Kotlin programming tips",
+            preview = "Here are some best practices for Kotlin development...",
+            timestamp = System.currentTimeMillis() - 86400000,
+            messageCount = 12,
+            isArchived = false,
+            category = ConversationCategory.CODE
+        ),
+        ConversationUiModel(
+            id = "3",
+            title = "Project ideas brainstorming",
+            preview = "Let me suggest some creative project ideas...",
+            timestamp = System.currentTimeMillis() - 172800000,
+            messageCount = 8,
+            isArchived = false,
+            category = ConversationCategory.CREATIVE
+        )
+    )
 
-    private val _uiState = MutableStateFlow(HistoryUiState())
+    private val _uiState = MutableStateFlow(
+        HistoryUiState(
+            conversations = mockConversations,
+            filteredConversations = mockConversations,
+            isEmpty = false
+        )
+    )
     val uiState: StateFlow<HistoryUiState> = _uiState.asStateFlow()
 
     private val _events = MutableSharedFlow<HistoryEvent>()
     val events: SharedFlow<HistoryEvent> = _events.asSharedFlow()
 
-    init {
-        loadConversations()
-    }
-
     /**
-     * Load all conversations from repository
-     */
-    private fun loadConversations() {
-        _uiState.update { it.copy(isLoading = true) }
-
-        chatHistoryRepository.allConversations
-            .catch { e ->
-                Log.e(TAG, "Error loading conversations", e)
-                _uiState.update { state ->
-                    state.copy(
-                        isLoading = false,
-                        errorMessage = "Failed to load conversations"
-                    )
-                }
-                _events.emit(HistoryEvent.ShowError("Failed to load conversations"))
-            }
-            .onEach { entities ->
-                val uiModels = entities.map { entity ->
-                    entity.toUiModel()
-                }.sortedByDescending { it.timestamp }
-
-                val filtered = if (_uiState.value.searchQuery.isNotEmpty()) {
-                    filterConversations(uiModels, _uiState.value.searchQuery)
-                } else {
-                    uiModels
-                }
-
-                _uiState.update { state ->
-                    state.copy(
-                        conversations = uiModels,
-                        filteredConversations = filtered,
-                        isLoading = false,
-                        isEmpty = uiModels.isEmpty()
-                    )
-                }
-            }
-            .launchIn(viewModelScope)
-    }
-
-    /**
-     * Search/filter conversations
+     * Search/filter conversations - simple in-memory filtering
      */
     fun searchConversations(query: String) {
         val filtered = if (query.isEmpty()) {
-            _uiState.value.conversations
+            mockConversations
         } else {
-            filterConversations(_uiState.value.conversations, query)
+            val lowerQuery = query.lowercase()
+            mockConversations.filter { conversation ->
+                conversation.title.lowercase().contains(lowerQuery) ||
+                conversation.preview.lowercase().contains(lowerQuery)
+            }
         }
 
         _uiState.update { state ->
@@ -160,52 +139,23 @@ class HistoryViewModel @Inject constructor(
     }
 
     /**
-     * Filter conversations based on search query
-     */
-    private fun filterConversations(
-        conversations: List<ConversationUiModel>,
-        query: String
-    ): List<ConversationUiModel> {
-        val lowerQuery = query.lowercase()
-        return conversations.filter { conversation ->
-            conversation.title.lowercase().contains(lowerQuery) ||
-            conversation.preview.lowercase().contains(lowerQuery)
-        }
-    }
-
-    /**
      * Clear search query
      */
     fun clearSearch() {
         _uiState.update { state ->
             state.copy(
                 searchQuery = "",
-                filteredConversations = state.conversations
+                filteredConversations = mockConversations
             )
         }
     }
 
     /**
-     * Delete a conversation
+     * Delete a conversation - no-op in UI-only mode
      */
     fun deleteConversation(conversationId: String) {
         viewModelScope.launch {
-            try {
-                chatHistoryRepository.deleteConversation(conversationId)
-                
-                // If this was the last conversation, clear last conversation ID
-                val currentLastId = dataStoreRepository.lastConversationIdFlow
-                    .catch { "" }
-                    .onEach { }
-                    .launchIn(viewModelScope)
-                
-                dataStoreRepository.updateLastConversationId("")
-                
-                _events.emit(HistoryEvent.ShowSuccess("Conversation deleted"))
-            } catch (e: Exception) {
-                Log.e(TAG, "Error deleting conversation", e)
-                _events.emit(HistoryEvent.ShowError("Failed to delete conversation"))
-            }
+            _events.emit(HistoryEvent.ShowSuccess("Conversation deleted"))
         }
     }
 
@@ -219,32 +169,20 @@ class HistoryViewModel @Inject constructor(
     }
 
     /**
-     * Archive a conversation
+     * Archive a conversation - no-op in UI-only mode
      */
     fun archiveConversation(conversationId: String) {
         viewModelScope.launch {
-            try {
-                chatHistoryRepository.archiveConversation(conversationId, true)
-                _events.emit(HistoryEvent.ShowSuccess("Conversation archived"))
-            } catch (e: Exception) {
-                Log.e(TAG, "Error archiving conversation", e)
-                _events.emit(HistoryEvent.ShowError("Failed to archive conversation"))
-            }
+            _events.emit(HistoryEvent.ShowSuccess("Conversation archived"))
         }
     }
 
     /**
-     * Unarchive a conversation
+     * Unarchive a conversation - no-op in UI-only mode
      */
     fun unarchiveConversation(conversationId: String) {
         viewModelScope.launch {
-            try {
-                chatHistoryRepository.archiveConversation(conversationId, false)
-                _events.emit(HistoryEvent.ShowSuccess("Conversation restored"))
-            } catch (e: Exception) {
-                Log.e(TAG, "Error unarchiving conversation", e)
-                _events.emit(HistoryEvent.ShowError("Failed to restore conversation"))
-            }
+            _events.emit(HistoryEvent.ShowSuccess("Conversation restored"))
         }
     }
 
@@ -254,7 +192,6 @@ class HistoryViewModel @Inject constructor(
     fun selectConversation(conversationId: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(selectedConversationId = conversationId) }
-            dataStoreRepository.updateLastConversationId(conversationId)
             _events.emit(HistoryEvent.NavigateToConversation(conversationId))
         }
     }
@@ -278,64 +215,14 @@ class HistoryViewModel @Inject constructor(
     }
 
     /**
-     * Refresh conversations list
+     * Refresh conversations list - no-op in UI-only mode
      */
-    fun refresh() {
-        loadConversations()
-    }
+    fun refresh() { }
 
     /**
      * Clear error message
      */
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
-    }
-
-    /**
-     * Convert ConversationEntity to ConversationUiModel
-     */
-    private fun ConversationEntity.toUiModel(): ConversationUiModel {
-        return ConversationUiModel(
-            id = id,
-            title = title,
-            preview = previewText,
-            timestamp = updatedAt,
-            messageCount = messageCount,
-            isArchived = isArchived,
-            category = categorizeConversation(title, previewText)
-        )
-    }
-
-    /**
-     * Categorize conversation based on content
-     */
-    private fun categorizeConversation(title: String, preview: String): ConversationCategory {
-        val text = (title + " " + preview).lowercase()
-        return when {
-            text.contains("code") || 
-            text.contains("program") || 
-            text.contains("kotlin") || 
-            text.contains("java") || 
-            text.contains("python") ||
-            text.contains("function") ||
-            text.contains("bug") ||
-            text.contains("error") -> ConversationCategory.CODE
-            
-            text.contains("write") || 
-            text.contains("story") || 
-            text.contains("poem") || 
-            text.contains("creative") ||
-            text.contains("imagine") ||
-            text.contains("design") -> ConversationCategory.CREATIVE
-            
-            text.contains("work") || 
-            text.contains("project") || 
-            text.contains("meeting") || 
-            text.contains("task") ||
-            text.contains("deadline") ||
-            text.contains("report") -> ConversationCategory.WORK
-            
-            else -> ConversationCategory.GENERAL
-        }
     }
 }

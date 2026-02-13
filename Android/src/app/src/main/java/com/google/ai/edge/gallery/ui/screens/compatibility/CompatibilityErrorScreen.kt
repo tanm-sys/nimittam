@@ -35,23 +35,44 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.google.ai.edge.gallery.common.DeviceCompatibilityChecker
-import com.google.ai.edge.gallery.common.DeviceCompatibilityChecker.CompatibilityIssue
-import com.google.ai.edge.gallery.common.DeviceCompatibilityChecker.IssueSeverity
+import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 
 /**
- * Screen shown when device is incompatible with the app.
+ * UI Model for compatibility issues (mock data)
+ */
+enum class IssueSeverity {
+    CRITICAL, WARNING
+}
+
+data class CompatibilityIssue(
+    val title: String,
+    val message: String,
+    val severity: IssueSeverity
+)
+
+/**
+ * Screen shown when device is incompatible with the app - UI ONLY
  */
 @Composable
 fun CompatibilityErrorScreen(
-    issues: List<CompatibilityIssue>,
-    warnings: List<CompatibilityIssue>,
-    onRetry: () -> Unit,
+    issues: List<CompatibilityIssue> = emptyList(),
+    warnings: List<CompatibilityIssue> = emptyList(),
+    onRetry: () -> Unit = {},
     onContinueAnyway: (() -> Unit)? = null
 ) {
     val criticalIssues = issues.filter { it.severity == IssueSeverity.CRITICAL }
     val canContinueWithWarnings = issues.isEmpty() && warnings.isNotEmpty()
+    
+    // Mock device info
+    val deviceInfo = listOf(
+        "Manufacturer" to "Google",
+        "Model" to "Pixel 8",
+        "Android Version" to "14",
+        "RAM" to "8 GB",
+        "Storage" to "128 GB"
+    )
     
     Box(
         modifier = Modifier
@@ -156,8 +177,6 @@ fun CompatibilityErrorScreen(
             Spacer(modifier = Modifier.height(32.dp))
             
             // Device Info
-            val context = androidx.compose.ui.platform.LocalContext.current
-            val deviceInfo = DeviceCompatibilityChecker.getDeviceInfo(context)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -229,6 +248,46 @@ private fun IssueItem(issue: CompatibilityIssue, color: Color) {
             text = issue.message,
             style = MaterialTheme.typography.bodySmall,
             color = Color(0xFFEBEBF5)
+        )
+    }
+}
+
+@Preview(device = "id:pixel_8")
+@Composable
+private fun CompatibilityErrorScreenPreview() {
+    NimittamTheme {
+        CompatibilityErrorScreen(
+            issues = listOf(
+                CompatibilityIssue(
+                    title = "Insufficient RAM",
+                    message = "This app requires at least 4GB of RAM",
+                    severity = IssueSeverity.CRITICAL
+                )
+            ),
+            warnings = listOf(
+                CompatibilityIssue(
+                    title = "Older Android Version",
+                    message = "Some features may not be available",
+                    severity = IssueSeverity.WARNING
+                )
+            )
+        )
+    }
+}
+
+@Preview(device = "id:pixel_8")
+@Composable
+private fun CompatibilityWarningScreenPreview() {
+    NimittamTheme {
+        CompatibilityErrorScreen(
+            issues = emptyList(),
+            warnings = listOf(
+                CompatibilityIssue(
+                    title = "Older Android Version",
+                    message = "Some features may not be available",
+                    severity = IssueSeverity.WARNING
+                )
+            )
         )
     }
 }

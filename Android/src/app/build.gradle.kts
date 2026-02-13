@@ -20,12 +20,12 @@ android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk = 36
 
-  defaultConfig {
+    defaultConfig {
     applicationId = "com.google.aiedge.gallery"
     minSdk = 31
     targetSdk = 36
-    versionCode = 18
-    versionName = "1.1.0"
+    versionCode = 19
+    versionName = "1.2.0"
 
     manifestPlaceholders["applicationName"] = "com.google.ai.edge.gallery.GalleryApplication"
 

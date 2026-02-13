@@ -34,14 +34,29 @@ class MLCEngine {
     companion object {
         private const val TAG = "MLCEngine"
         
+        @Volatile
+        var isNativeLibraryLoaded = false
+            private set
+        
+        var nativeLibraryError: Throwable? = null
+            private set
+        
         init {
             // Ensure native library is loaded before any JNI calls
             try {
                 System.loadLibrary("tvm4j_runtime_packed")
+                isNativeLibraryLoaded = true
+                nativeLibraryError = null
                 Log.i(TAG, "Native library loaded successfully")
             } catch (e: UnsatisfiedLinkError) {
                 Log.e(TAG, "Failed to load native library", e)
-                throw MLCEngineException("Failed to load native library", e)
+                isNativeLibraryLoaded = false
+                nativeLibraryError = e
+                // Don't throw - allow app to start and show error gracefully
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error loading native library", e)
+                isNativeLibraryLoaded = false
+                nativeLibraryError = e
             }
         }
     }
@@ -53,6 +68,15 @@ class MLCEngine {
     private val threads = mutableListOf<BackgroundWorker>()
 
     init {
+        // Check if native library was loaded successfully
+        if (!isNativeLibraryLoaded) {
+            val errorMsg = nativeLibraryError?.message ?: "Unknown error"
+            throw MLCEngineException(
+                "Cannot create MLCEngine: Native library not loaded. Error: $errorMsg",
+                nativeLibraryError
+            )
+        }
+        
         try {
             Log.i(TAG, "Creating MLCEngine...")
             state = EngineState()

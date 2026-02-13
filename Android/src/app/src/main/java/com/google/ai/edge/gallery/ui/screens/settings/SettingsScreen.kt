@@ -71,10 +71,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import androidx.compose.ui.unit.sp
+import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.components.GlassmorphismLevel
 import com.google.ai.edge.gallery.ui.components.glassmorphic
 import com.google.ai.edge.gallery.ui.theme.AnimationDuration
@@ -87,13 +85,11 @@ import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
-import com.google.ai.edge.gallery.ui.viewmodels.SettingsEvent
-import com.google.ai.edge.gallery.ui.viewmodels.SettingsViewModel
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Settings Screen
+ * Settings Screen - UI ONLY
  * Grouped sections with 32dp spacing
  * Slider controls with haptic feedback visualization
  * Black/white toggle with smooth morphing
@@ -102,36 +98,22 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit = {},
-    viewModel: SettingsViewModel = hiltViewModel()
+    onNavigateBack: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Mock UI state
+    var temperature by remember { mutableFloatStateOf(0.7f) }
+    var maxTokens by remember { mutableIntStateOf(1024) }
+    var darkTheme by remember { mutableStateOf(true) }
+    var hapticFeedbackEnabled by remember { mutableStateOf(true) }
+    var notificationsEnabled by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
+    var showClearHistoryDialog by remember { mutableStateOf(false) }
     val hapticFeedback = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
-    var showClearHistoryDialog by remember { mutableStateOf(false) }
-
-    // Handle events from ViewModel
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is SettingsEvent.NavigateBack -> onNavigateBack()
-                is SettingsEvent.ShowError -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is SettingsEvent.ShowSuccess -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is SettingsEvent.ConfirmClearHistory -> {
-                    showClearHistoryDialog = true
-                }
-            }
-        }
-    }
-
     var showContent by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(100)
+        delay(100)
         showContent = true
     }
 
@@ -149,7 +131,7 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             // Header
-            SettingsHeader(onNavigateBack = { viewModel.navigateBack() })
+            SettingsHeader(onNavigateBack = onNavigateBack)
 
             // Content
             Column(
@@ -161,11 +143,11 @@ fun SettingsScreen(
                 // Model Section
                 SettingsSection(title = "Model") {
                     ModelSettingsCard(
-                        temperature = uiState.temperature,
-                        maxTokens = uiState.maxTokens,
-                        selectedModel = uiState.selectedModel,
-                        onTemperatureChange = { viewModel.updateTemperature(it) },
-                        onMaxTokensChange = { viewModel.updateMaxTokens(it) }
+                        temperature = temperature,
+                        maxTokens = maxTokens,
+                        selectedModel = "Qwen2.5-0.5B",
+                        onTemperatureChange = { temperature = it },
+                        onMaxTokensChange = { maxTokens = it }
                     )
                 }
 
@@ -174,12 +156,12 @@ fun SettingsScreen(
                 // Interface Section
                 SettingsSection(title = "Interface") {
                     InterfaceSettingsCard(
-                        darkTheme = uiState.darkTheme,
-                        hapticFeedback = uiState.hapticFeedbackEnabled,
-                        notifications = uiState.notificationsEnabled,
-                        onDarkThemeChange = { viewModel.updateDarkTheme(it) },
-                        onHapticFeedbackChange = { viewModel.updateHapticFeedback(it) },
-                        onNotificationsChange = { viewModel.updateNotifications(it) }
+                        darkTheme = darkTheme,
+                        hapticFeedback = hapticFeedbackEnabled,
+                        notifications = notificationsEnabled,
+                        onDarkThemeChange = { darkTheme = it },
+                        onHapticFeedbackChange = { hapticFeedbackEnabled = it },
+                        onNotificationsChange = { notificationsEnabled = it }
                     )
                 }
 
@@ -188,9 +170,10 @@ fun SettingsScreen(
                 // Storage Section
                 SettingsSection(title = "Storage") {
                     StorageSettingsCard(
-                        storageInfo = uiState.storageInfo,
-                        onClearHistory = { viewModel.requestClearHistory() },
-                        isLoading = uiState.isLoading
+                        usedBytes = 524288000L, // 500 MB mock
+                        totalBytes = 2147483648L, // 2 GB mock
+                        onClearHistory = { showClearHistoryDialog = true },
+                        isLoading = isLoading
                     )
                 }
 
@@ -220,8 +203,10 @@ fun SettingsScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            viewModel.clearChatHistory()
+                            isLoading = true
+                            // Simulate operation
                             showClearHistoryDialog = false
+                            isLoading = false
                         }
                     ) {
                         Text("Clear", color = Color.Red)
@@ -480,7 +465,8 @@ private fun InterfaceSettingsCard(
 
 @Composable
 private fun StorageSettingsCard(
-    storageInfo: com.google.ai.edge.gallery.llm.StorageInfo?,
+    usedBytes: Long,
+    totalBytes: Long,
     onClearHistory: () -> Unit,
     isLoading: Boolean
 ) {
@@ -488,12 +474,10 @@ private fun StorageSettingsCard(
 
     Column {
         // Storage visualization
-        storageInfo?.let { info ->
-            StorageVisualization(
-                usedBytes = info.usedBytes,
-                totalBytes = info.usedBytes + info.freeBytes
-            )
-        }
+        StorageVisualization(
+            usedBytes = usedBytes,
+            totalBytes = totalBytes
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
 

@@ -19,19 +19,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import com.google.ai.edge.gallery.ui.theme.PureWhite
 import kotlin.random.Random
 
 /**
  * Noise Texture Component
  * Subtle noise texture at 1-2% opacity for depth
- * No generic gradient backgrounds - only noise textures
  */
 
-/**
- * Static noise texture that caches points across recompositions.
- * Uses remember to avoid regenerating noise points on every frame.
- */
 @Composable
 fun NoiseTexture(
     modifier: Modifier = Modifier,
@@ -40,12 +36,10 @@ fun NoiseTexture(
     baseColor: Color = PureWhite,
     seed: Int = 42
 ) {
-    // Cache noise points - only regenerate if seed or density changes
     val noisePoints = remember(seed, density) {
         generateNoisePoints(density, seed)
     }
     
-    // Cache the color with opacity to avoid recalculation
     val drawColor = remember(baseColor, opacity) {
         baseColor.copy(alpha = opacity)
     }
@@ -55,11 +49,6 @@ fun NoiseTexture(
     }
 }
 
-/**
- * Animated noise texture with frame-based caching.
- * OPTIMIZATION: Uses remember with frame key to cache points per frame,
- * avoiding regeneration during unrelated recompositions.
- */
 @Composable
 fun AnimatedNoiseTexture(
     modifier: Modifier = Modifier,
@@ -68,12 +57,10 @@ fun AnimatedNoiseTexture(
     baseColor: Color = PureWhite,
     frame: Int = 0
 ) {
-    // Cache noise points per frame - only regenerate when frame changes
     val noisePoints = remember(frame, density) {
         generateNoisePoints(density, frame)
     }
     
-    // Cache the color with opacity
     val drawColor = remember(baseColor, opacity) {
         baseColor.copy(alpha = opacity)
     }
@@ -117,10 +104,6 @@ data class NoisePoint(
     val size: Float
 )
 
-/**
- * Mesh Gradient Background with Noise
- * Animated mesh gradient at 2% opacity over pure black
- */
 @Composable
 fun MeshGradientBackground(
     modifier: Modifier = Modifier,
@@ -131,7 +114,6 @@ fun MeshGradientBackground(
         val width = size.width
         val height = size.height
 
-        // Create subtle mesh gradient effect
         val points = listOf(
             Offset(0f, 0f),
             Offset(width * 0.5f, height * 0.3f + kotlin.math.sin(time) * 50f),
@@ -143,7 +125,6 @@ fun MeshGradientBackground(
             Offset(width, height)
         )
 
-        // Draw gradient mesh with very low opacity
         points.forEachIndexed { index, point ->
             val alpha = (kotlin.math.sin(time + index) + 1f) * 0.5f * opacity
             drawCircle(

@@ -10,9 +10,6 @@ package com.google.ai.edge.gallery.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -56,11 +54,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.Column
-import com.google.ai.edge.gallery.ui.components.GlassmorphismLevel
-import com.google.ai.edge.gallery.ui.components.glassmorphic
-import com.google.ai.edge.gallery.ui.theme.AnimationDuration
-import com.google.ai.edge.gallery.ui.theme.Gray40
 import com.google.ai.edge.gallery.ui.theme.Gray64
 import com.google.ai.edge.gallery.ui.theme.Gray80
 import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
@@ -68,17 +61,14 @@ import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Long-Press Context Menu (Radial Menu)
- * Radial menu with 6 options
- * Circular arrangement
- * Blur 40px background
- * Shape morphing selection
+ * Radial Menu Component
+ * Long-press context menu with circular arrangement
+ * Blur backdrop and shape morphing selection
  */
 
 data class RadialMenuItem(
@@ -92,7 +82,7 @@ fun RadialContextMenu(
     isVisible: Boolean,
     onDismiss: () -> Unit,
     onItemSelected: (String) -> Unit,
-    centerPosition: Offset = Offset(540f, 960f)  // Center of 1080x1920 screen
+    centerPosition: Offset = Offset(540f, 960f)
 ) {
     val menuItems = remember {
         listOf(
@@ -122,7 +112,6 @@ fun RadialContextMenu(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Radial menu items
             val radius = 140.dp
 
             menuItems.forEachIndexed { index, item ->
@@ -144,7 +133,6 @@ fun RadialContextMenu(
                 )
             }
 
-            // Center indicator
             Box(
                 modifier = Modifier
                     .size(16.dp)
@@ -178,7 +166,6 @@ private fun RadialMenuButton(
         )
     }
 
-    // Selection animation
     val selectionScale = remember { Animatable(1f) }
 
     LaunchedEffect(isSelected) {
@@ -251,7 +238,6 @@ fun LongPressContextMenuDemo(
             },
         contentAlignment = Alignment.Center
     ) {
-        // Demo content
         Box(
             modifier = Modifier
                 .size(200.dp)
@@ -267,7 +253,6 @@ fun LongPressContextMenuDemo(
             )
         }
 
-        // Radial menu
         RadialContextMenu(
             isVisible = showMenu,
             onDismiss = { showMenu = false },
@@ -277,7 +262,6 @@ fun LongPressContextMenuDemo(
             }
         )
 
-        // Selected item feedback
         selectedItem?.let {
             Text(
                 text = "Selected: $it",

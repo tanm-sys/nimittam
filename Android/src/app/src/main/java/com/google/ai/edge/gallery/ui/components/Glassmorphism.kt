@@ -22,15 +22,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.google.ai.edge.gallery.ui.theme.GlassmorphismHeavy
-import com.google.ai.edge.gallery.ui.theme.GlassmorphismLight
-import com.google.ai.edge.gallery.ui.theme.GlassmorphismMedium
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
 
@@ -40,23 +38,17 @@ import com.google.ai.edge.gallery.ui.theme.PureWhite
  * Z-depth layering with 0px to 32dp elevation
  */
 
-/**
- * Glassmorphic surface with optimized blur rendering.
- * OPTIMIZATION: Caches paint objects and uses graphicsLayer for hardware acceleration.
- * The paint is remembered across recompositions to avoid object churn.
- */
 @Composable
 fun GlassmorphicSurface(
     modifier: Modifier = Modifier,
     blurRadius: Dp = 20.dp,
     backgroundAlpha: Float = 0.08f,
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
+    shape: Shape = RoundedCornerShape(16.dp),
     content: @Composable BoxScope.() -> Unit
 ) {
     val density = LocalDensity.current
     val blurRadiusPx = with(density) { blurRadius.toPx() }
     
-    // Cache paint object to avoid recreation on every recomposition
     val paint = remember(blurRadiusPx, backgroundAlpha) {
         Paint().apply {
             asFrameworkPaint().apply {
@@ -73,7 +65,6 @@ fun GlassmorphicSurface(
         }
     }
     
-    // Cache background color to avoid recalculation
     val backgroundColor = remember(backgroundAlpha) {
         PureWhite.copy(alpha = backgroundAlpha)
     }
@@ -81,10 +72,7 @@ fun GlassmorphicSurface(
     Box(
         modifier = modifier
             .graphicsLayer {
-                // Enable hardware layer for blur effect
-                // Using alpha close to 1.0 but not exactly 1.0 to trigger hardware layer
                 this.alpha = 0.99f
-                // Enable hardware acceleration
                 this.compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
             }
             .drawBehind {
@@ -104,7 +92,7 @@ fun GlassmorphicSurface(
 fun GlassmorphicCard(
     modifier: Modifier = Modifier,
     level: GlassmorphismLevel = GlassmorphismLevel.MEDIUM,
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
+    shape: Shape = RoundedCornerShape(16.dp),
     content: @Composable BoxScope.() -> Unit
 ) {
     val (blurRadius, backgroundAlpha, tonalElevation) = when (level) {
@@ -170,15 +158,14 @@ fun GlassmorphicOverlay(
 }
 
 enum class GlassmorphismLevel {
-    LIGHT,   // Level 1: 8dp blur, 5% opacity
-    MEDIUM,  // Level 2: 20dp blur, 8% opacity
-    HEAVY    // Level 3: 40dp blur, 16% opacity
+    LIGHT,
+    MEDIUM,
+    HEAVY
 }
 
-// === Predefined Glassmorphism Modifiers ===
 fun Modifier.glassmorphic(
     level: GlassmorphismLevel = GlassmorphismLevel.MEDIUM,
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp)
+    shape: Shape = RoundedCornerShape(16.dp)
 ): Modifier {
     val alpha = when (level) {
         GlassmorphismLevel.LIGHT -> 0.05f
@@ -189,21 +176,19 @@ fun Modifier.glassmorphic(
     return this
         .background(PureWhite.copy(alpha = alpha), shape)
         .graphicsLayer {
-            // Use shadowAlpha to avoid conflict with the alpha parameter
             shadowElevation = 0f
-            // Trigger hardware layer without using alpha property name
             this.alpha = 0.99f
         }
 }
 
 fun Modifier.glassmorphicLight(
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp)
+    shape: Shape = RoundedCornerShape(16.dp)
 ): Modifier = glassmorphic(GlassmorphismLevel.LIGHT, shape)
 
 fun Modifier.glassmorphicMedium(
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp)
+    shape: Shape = RoundedCornerShape(16.dp)
 ): Modifier = glassmorphic(GlassmorphismLevel.MEDIUM, shape)
 
 fun Modifier.glassmorphicHeavy(
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp)
+    shape: Shape = RoundedCornerShape(16.dp)
 ): Modifier = glassmorphic(GlassmorphismLevel.HEAVY, shape)

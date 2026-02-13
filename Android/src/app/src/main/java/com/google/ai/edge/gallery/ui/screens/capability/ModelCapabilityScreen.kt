@@ -62,7 +62,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Model Capability Visualization Screen
+ * Model Capability Visualization Screen - UI ONLY
  * Full-screen overlay, 90% black backdrop
  * 3D node network visualization (pure white wireframe)
  * "Reasoning" text with animated ellipsis

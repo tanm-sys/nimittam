@@ -67,8 +67,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.ui.components.NoiseTexture
 import com.google.ai.edge.gallery.ui.components.PulsingDot
 import com.google.ai.edge.gallery.ui.components.GlassmorphismLevel
@@ -87,15 +85,28 @@ import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
 import com.google.ai.edge.gallery.ui.theme.SuperellipseRoundedShape
 import com.google.ai.edge.gallery.ui.theme.UltraModelCardShape
-import com.google.ai.edge.gallery.ui.viewmodels.ModelOptionUiModel
-import com.google.ai.edge.gallery.ui.viewmodels.ModelType
-import com.google.ai.edge.gallery.ui.viewmodels.OnboardingEvent
-import com.google.ai.edge.gallery.ui.viewmodels.OnboardingViewModel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 
 /**
- * Onboarding Model Selection Screen
+ * UI Models for onboarding (mock data)
+ */
+enum class ModelType {
+    LITE, PRO, ULTRA
+}
+
+data class ModelOptionUiModel(
+    val type: ModelType,
+    val name: String,
+    val description: String,
+    val parameters: String,
+    val speed: String,
+    val memory: String,
+    val features: List<String>,
+    val isAvailable: Boolean = true
+)
+
+/**
+ * Onboarding Model Selection Screen - UI ONLY
  * Dark background, glassmorphic cards at Level 2 elevation
  * "Choose Your Intelligence" title
  * Three model cards with different corner treatments
@@ -105,36 +116,50 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun OnboardingScreen(
     onModelSelected: (ModelType) -> Unit = {},
-    onNavigateToChat: () -> Unit = {},
-    viewModel: OnboardingViewModel = hiltViewModel()
+    onNavigateToChat: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Mock model options
+    val modelOptions = remember {
+        listOf(
+            ModelOptionUiModel(
+                type = ModelType.LITE,
+                name = "Lite",
+                description = "Fast & Efficient",
+                parameters = "0.5B",
+                speed = "Fast",
+                memory = "~500MB",
+                features = listOf("Quick replies", "Basic tasks"),
+                isAvailable = true
+            ),
+            ModelOptionUiModel(
+                type = ModelType.PRO,
+                name = "Pro",
+                description = "Balanced Performance",
+                parameters = "1.5B",
+                speed = "Medium",
+                memory = "~1.2GB",
+                features = listOf("Complex reasoning", "Code help"),
+                isAvailable = true
+            ),
+            ModelOptionUiModel(
+                type = ModelType.ULTRA,
+                name = "Ultra",
+                description = "Maximum Capability",
+                parameters = "3B",
+                speed = "Slower",
+                memory = "~2.5GB",
+                features = listOf("Advanced reasoning", "Creative writing"),
+                isAvailable = false
+            )
+        )
+    }
+    
+    var selectedModel by remember { mutableStateOf<ModelType?>(null) }
     val hapticFeedback = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showTitle by remember { mutableStateOf(false) }
     var showCards by remember { mutableStateOf(false) }
     var showBadge by remember { mutableStateOf(false) }
-
-    // Handle events from ViewModel
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is OnboardingEvent.NavigateToChat -> onNavigateToChat()
-                is OnboardingEvent.ShowError -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is OnboardingEvent.ShowSuccess -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is OnboardingEvent.DownloadProgressUpdate -> {
-                    // Handle download progress update
-                }
-                OnboardingEvent.RequestStoragePermission -> {
-                    // Handle storage permission request
-                }
-            }
-        }
-    }
 
     // Staggered animation
     LaunchedEffect(Unit) {
@@ -210,65 +235,55 @@ fun OnboardingScreen(
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // Loading state
-            if (uiState.isLoading) {
-                CircularProgressIndicator(
-                    color = PureWhite,
-                    strokeWidth = 2.dp
-                )
-            } else {
-                // Model cards
-                uiState.modelOptions.forEachIndexed { index, model ->
-                    AnimatedVisibility(
-                        visible = showCards,
-                        enter = fadeIn(
-                            animationSpec = tween(
-                                500,
-                                delayMillis = index * 150,
-                                easing = MaterialStandardEasing
-                            )
-                        ) + slideInVertically(
-                            initialOffsetY = { it / 2 },
-                            animationSpec = tween(
-                                500,
-                                delayMillis = index * 150
-                            )
-                        )
-                    ) {
-                        ModelCard(
-                            model = model,
-                            isSelected = uiState.selectedModel == model.type,
-                            onClick = {
-                                // Haptic feedback for model selection (confirmation)
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                viewModel.selectModel(model.type)
-                            }
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                // Continue button
+            // Model cards
+            modelOptions.forEachIndexed { index, model ->
                 AnimatedVisibility(
-                    visible = uiState.selectedModel != null,
-                    enter = fadeIn(animationSpec = tween(300))
+                    visible = showCards,
+                    enter = fadeIn(
+                        animationSpec = tween(
+                            500,
+                            delayMillis = index * 150,
+                            easing = MaterialStandardEasing
+                        )
+                    ) + slideInVertically(
+                        initialOffsetY = { it / 2 },
+                        animationSpec = tween(
+                            500,
+                            delayMillis = index * 150
+                        )
+                    )
                 ) {
-                    ContinueButton(
+                    ModelCard(
+                        model = model,
+                        isSelected = selectedModel == model.type,
                         onClick = {
-                            uiState.selectedModel?.let {
-                                // Haptic feedback for completion (success)
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                // Only notify that model was selected - ViewModel will handle navigation
-                                onModelSelected(it)
-                                // Save data and navigate via ViewModel event
-                                viewModel.continueToApp()
-                            }
-                        },
-                        enabled = uiState.canContinue && !uiState.isLoading
+                            // Haptic feedback for model selection (confirmation)
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedModel = model.type
+                        }
                     )
                 }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Continue button
+            AnimatedVisibility(
+                visible = selectedModel != null,
+                enter = fadeIn(animationSpec = tween(300))
+            ) {
+                ContinueButton(
+                    onClick = {
+                        selectedModel?.let {
+                            // Haptic feedback for completion (success)
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onModelSelected(it)
+                            onNavigateToChat()
+                        }
+                    },
+                    enabled = selectedModel != null
+                )
             }
         }
 

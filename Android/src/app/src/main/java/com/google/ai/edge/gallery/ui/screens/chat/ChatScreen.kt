@@ -10,7 +10,6 @@ package com.google.ai.edge.gallery.ui.screens.chat
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -63,7 +62,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,16 +77,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.google.ai.edge.gallery.ui.components.NoiseTexture
-import com.google.ai.edge.gallery.ui.components.OfflineStatusWaveform
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.unit.sp
+import com.google.ai.edge.gallery.ui.components.NoiseTexture
+import com.google.ai.edge.gallery.ui.components.OfflineStatusWaveform
 import com.google.ai.edge.gallery.ui.components.GlassmorphismLevel
 import com.google.ai.edge.gallery.ui.components.glassmorphic
 import com.google.ai.edge.gallery.ui.theme.AiMessageShape
-import com.google.ai.edge.gallery.ui.theme.AnimationDuration
 import com.google.ai.edge.gallery.ui.theme.ChatMessageText
 import com.google.ai.edge.gallery.ui.theme.ChatTimestamp
 import com.google.ai.edge.gallery.ui.theme.Gray12
@@ -94,26 +93,33 @@ import com.google.ai.edge.gallery.ui.theme.Gray64
 import com.google.ai.edge.gallery.ui.theme.Gray80
 import com.google.ai.edge.gallery.ui.theme.InputComposerCollapsedShape
 import com.google.ai.edge.gallery.ui.theme.InputComposerExpandedShape
-import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamTheme
 import com.google.ai.edge.gallery.ui.theme.Obsidian
 import com.google.ai.edge.gallery.ui.theme.PureBlack
 import com.google.ai.edge.gallery.ui.theme.PureWhite
 import com.google.ai.edge.gallery.ui.theme.UserMessageShape
-import com.google.ai.edge.gallery.ui.viewmodels.ChatEvent
-import com.google.ai.edge.gallery.ui.viewmodels.ChatMessageUiModel
-import com.google.ai.edge.gallery.ui.viewmodels.ChatViewModel
-import kotlinx.coroutines.flow.collectLatest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 /**
- * Main Chat Interface (PRIMARY SCREEN)
+ * UI Model for chat messages (mock data)
+ */
+data class ChatMessageUiModel(
+    val id: String = UUID.randomUUID().toString(),
+    val content: String,
+    val isUser: Boolean,
+    val timestamp: Long = System.currentTimeMillis(),
+    val isComplete: Boolean = true
+)
+
+/**
+ * Main Chat Interface (PRIMARY SCREEN) - UI ONLY
  * Header with Nimittam logomark, model name, settings icon
  * User messages: right-aligned, obsidian #0A0A0A, sharp corners, 1px border
  * AI messages: left-aligned, pure black, 28dp superellipse, left border accent
- * Input composer: Level 3 glassmorphism, 56dp→200dp expanding
+ * Input composer: Level 3 glassmorphism, 56dp->200dp expanding
  * Offline status bar: 32dp height, animated waveform (DeepMind style)
  */
 
@@ -121,46 +127,39 @@ import java.util.Locale
 fun ChatScreen(
     onNavigateToHistory: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
-    onNavigateToVoice: () -> Unit = {},
-    viewModel: ChatViewModel = hiltViewModel()
+    onNavigateToVoice: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Mock UI state
+    val messages = remember {
+        mutableStateListOf(
+            ChatMessageUiModel(
+                content = "Hello! I'm Nimittam, your offline AI assistant. How can I help you today?",
+                isUser = false,
+                timestamp = System.currentTimeMillis() - 60000
+            ),
+            ChatMessageUiModel(
+                content = "Can you explain quantum computing in simple terms?",
+                isUser = true,
+                timestamp = System.currentTimeMillis() - 30000
+            ),
+            ChatMessageUiModel(
+                content = "Quantum computing uses quantum bits (qubits) that can exist in multiple states simultaneously, unlike classical bits that are either 0 or 1. This allows quantum computers to process complex calculations much faster for certain problems.",
+                isUser = false,
+                timestamp = System.currentTimeMillis()
+            )
+        )
+    }
+    var inputText by remember { mutableStateOf("") }
+    var isGenerating by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val hapticFeedback = LocalHapticFeedback.current
 
-    // Handle events from ViewModel
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            when (event) {
-                is ChatEvent.ScrollToBottom -> {
-                    if (uiState.messages.isNotEmpty()) {
-                        listState.animateScrollToItem(uiState.messages.size - 1)
-                    }
-                }
-                is ChatEvent.ShowError -> {
-                    // Error is shown via Snackbar
-                }
-                else -> {}
-            }
-        }
-    }
-
     // Auto-scroll to bottom when new messages arrive
-    LaunchedEffect(uiState.messages.size) {
-        if (uiState.messages.isNotEmpty()) {
-            val lastIndex = uiState.messages.size - 1
-            val lastMessage = uiState.messages.lastOrNull()
-            
-            // Check if this is a rapid update (streaming scenario)
-            val isRapidUpdate = uiState.messages.size > 1 && lastMessage?.isComplete == false
-            
-            if (isRapidUpdate) {
-                // Use instant scroll for streaming to avoid animation overhead
-                listState.scrollToItem(lastIndex)
-            } else {
-                // Use smooth animation for user-initiated messages
-                listState.animateScrollToItem(lastIndex)
-            }
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            val lastIndex = messages.size - 1
+            listState.animateScrollToItem(lastIndex)
         }
     }
 
@@ -183,7 +182,7 @@ fun ChatScreen(
         ) {
             // Header
             ChatHeader(
-                modelName = uiState.modelName,
+                modelName = "Qwen2.5-0.5B",
                 onHistoryClick = onNavigateToHistory,
                 onSettingsClick = onNavigateToSettings
             )
@@ -200,17 +199,17 @@ fun ChatScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)
             ) {
-                items(uiState.messages, key = { it.id }) { message ->
+                items(messages, key = { it.id }) { message ->
                     ChatMessageItem(message = message)
                 }
             }
 
             // Error message
-            uiState.errorMessage?.let { error ->
+            errorMessage?.let { error ->
                 Snackbar(
                     modifier = Modifier.padding(16.dp),
                     action = {
-                        TextButton(onClick = { viewModel.retryLastMessage() }) {
+                        TextButton(onClick = { errorMessage = null }) {
                             Text("Retry", color = PureWhite)
                         }
                     }
@@ -221,15 +220,24 @@ fun ChatScreen(
 
             // Input composer
             ChatInputComposer(
-                value = uiState.inputText,
-                onValueChange = { viewModel.updateInputText(it) },
+                value = inputText,
+                onValueChange = { inputText = it },
                 isFocused = false,
                 onFocusChange = { },
                 onSend = {
-                    if (uiState.inputText.isNotBlank()) {
+                    if (inputText.isNotBlank()) {
                         // Haptic feedback for sending message (impact)
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                        viewModel.sendMessage()
+                        // Add user message to mock list
+                        messages.add(
+                            ChatMessageUiModel(
+                                content = inputText,
+                                isUser = true
+                            )
+                        )
+                        inputText = ""
+                        // Simulate AI response
+                        isGenerating = true
                     }
                 },
                 onVoiceClick = {
@@ -237,7 +245,7 @@ fun ChatScreen(
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                     onNavigateToVoice()
                 },
-                isGenerating = uiState.isGenerating,
+                isGenerating = isGenerating,
                 hapticFeedback = hapticFeedback
             )
 

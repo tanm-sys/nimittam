@@ -19,16 +19,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.google.ai.edge.gallery.ui.screens.capability.ModelCapabilityScreen
-import com.google.ai.edge.gallery.ui.screens.capability.ProcessingStage
 import com.google.ai.edge.gallery.ui.screens.chat.ChatScreen
 import com.google.ai.edge.gallery.ui.screens.history.HistoryScreen
-import com.google.ai.edge.gallery.ui.viewmodels.ModelType
 import com.google.ai.edge.gallery.ui.screens.onboarding.OnboardingScreen
 import com.google.ai.edge.gallery.ui.screens.settings.SettingsScreen
 import com.google.ai.edge.gallery.ui.screens.splash.SplashScreen
 import com.google.ai.edge.gallery.ui.screens.voice.VoiceInputScreen
 import com.google.ai.edge.gallery.ui.theme.AnimationDuration
-import com.google.ai.edge.gallery.ui.theme.MaterialStandardEasing
 import com.google.ai.edge.gallery.ui.theme.NimittamEasing
 
 /**
@@ -105,10 +102,6 @@ fun NimittamNavigation(
         // Onboarding Screen
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
-                onModelSelected = { modelType ->
-                    // Model selection is handled by ViewModel
-                    // Navigation will be triggered via onNavigateToChat after data is saved
-                },
                 onNavigateToChat = {
                     navController.navigate(Routes.CHAT) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
@@ -137,12 +130,6 @@ fun NimittamNavigation(
             HistoryScreen(
                 onNavigateBack = {
                     navController.popBackStack()
-                },
-                onNewChat = {
-                    navController.popBackStack()
-                },
-                onConversationClick = { conversationId ->
-                    navController.popBackStack()
                 }
             )
         }
@@ -160,9 +147,6 @@ fun NimittamNavigation(
         composable(Routes.VOICE) {
             VoiceInputScreen(
                 onDismiss = {
-                    navController.popBackStack()
-                },
-                onComplete = { transcription ->
                     navController.popBackStack()
                 }
             )
@@ -185,16 +169,8 @@ fun NimittamNavigation(
             val stage = backStackEntry.arguments?.getString("stage") ?: "reasoning"
             val progress = backStackEntry.arguments?.getFloat("progress") ?: 0f
 
-            val processingStage = when (stage) {
-                "analyzing" -> ProcessingStage.ANALYZING
-                "reasoning" -> ProcessingStage.REASONING
-                "generating" -> ProcessingStage.GENERATING
-                "complete" -> ProcessingStage.COMPLETE
-                else -> ProcessingStage.REASONING
-            }
-
             ModelCapabilityScreen(
-                stage = processingStage,
+                stage = stage,
                 progress = progress,
                 onComplete = {
                     navController.popBackStack()

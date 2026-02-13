@@ -8,10 +8,8 @@
 
 package com.google.ai.edge.gallery.ui.viewmodels
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -23,7 +21,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 import kotlin.random.Random
 
 /**
@@ -60,13 +57,11 @@ sealed class VoiceInputEvent {
 
 /**
  * ViewModel for the Voice Input screen.
- * Manages voice recording state and speech-to-text (mock implementation).
+ * UI-only version with mock speech-to-text simulation.
  */
-@HiltViewModel
-class VoiceInputViewModel @Inject constructor() : ViewModel() {
+class VoiceInputViewModel : ViewModel() {
 
     companion object {
-        private const val TAG = "VoiceInputViewModel"
         private const val MAX_RECORDING_DURATION_MS = 30000L // 30 seconds
         private val SIMULATION_WORDS = listOf(
             "Hello",
@@ -93,88 +88,64 @@ class VoiceInputViewModel @Inject constructor() : ViewModel() {
     private var startTime: Long = 0
 
     /**
-     * Start voice recording
+     * Start voice recording simulation
      */
     fun startRecording() {
         if (_uiState.value.state == VoiceInputState.LISTENING) return
 
         viewModelScope.launch {
-            try {
-                _uiState.update { 
-                    it.copy(
-                        state = VoiceInputState.LISTENING,
-                        isRecording = true,
-                        errorMessage = null,
-                        transcription = ""
-                    )
-                }
-                startTime = System.currentTimeMillis()
+            _uiState.update { 
+                it.copy(
+                    state = VoiceInputState.LISTENING,
+                    isRecording = true,
+                    errorMessage = null,
+                    transcription = ""
+                )
+            }
+            startTime = System.currentTimeMillis()
 
-                // Start audio level simulation
-                simulateAudioLevels()
+            // Start audio level simulation
+            simulateAudioLevels()
 
-                // Start recording duration tracking
-                recordingJob = launch {
-                    while (_uiState.value.isRecording) {
-                        val duration = System.currentTimeMillis() - startTime
-                        _uiState.update { it.copy(recordingDurationMs = duration) }
-                        
-                        // Auto-stop after max duration
-                        if (duration >= MAX_RECORDING_DURATION_MS) {
-                            stopRecording()
-                            break
-                        }
-                        
-                        delay(100)
+            // Start recording duration tracking
+            recordingJob = launch {
+                while (_uiState.value.isRecording) {
+                    val duration = System.currentTimeMillis() - startTime
+                    _uiState.update { it.copy(recordingDurationMs = duration) }
+                    
+                    // Auto-stop after max duration
+                    if (duration >= MAX_RECORDING_DURATION_MS) {
+                        stopRecording()
+                        break
                     }
+                    
+                    delay(100)
                 }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error starting recording", e)
-                _uiState.update { 
-                    it.copy(
-                        state = VoiceInputState.ERROR,
-                        errorMessage = "Failed to start recording"
-                    )
-                }
-                _events.emit(VoiceInputEvent.ShowError("Failed to start recording"))
             }
         }
     }
 
     /**
-     * Stop voice recording and start processing
+     * Stop voice recording and start processing simulation
      */
     fun stopRecording() {
         if (_uiState.value.state != VoiceInputState.LISTENING) return
 
         viewModelScope.launch {
-            try {
-                // Stop recording
-                recordingJob?.cancel()
-                audioSimulationJob?.cancel()
-                
-                _uiState.update { 
-                    it.copy(
-                        state = VoiceInputState.PROCESSING,
-                        isRecording = false,
-                        audioLevel = 0f
-                    )
-                }
-
-                // Simulate speech-to-text processing
-                simulateSpeechToText()
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error stopping recording", e)
-                _uiState.update { 
-                    it.copy(
-                        state = VoiceInputState.ERROR,
-                        errorMessage = "Failed to process recording"
-                    )
-                }
-                _events.emit(VoiceInputEvent.ShowError("Failed to process recording"))
+            // Stop recording
+            recordingJob?.cancel()
+            audioSimulationJob?.cancel()
+            
+            _uiState.update { 
+                it.copy(
+                    state = VoiceInputState.PROCESSING,
+                    isRecording = false,
+                    audioLevel = 0f
+                )
             }
+
+            // Simulate speech-to-text processing
+            simulateSpeechToText()
         }
     }
 
@@ -251,7 +222,6 @@ class VoiceInputViewModel @Inject constructor() : ViewModel() {
 
     /**
      * Simulate speech-to-text processing
-     * In a real implementation, this would use Android's SpeechRecognizer or a cloud API
      */
     private suspend fun simulateSpeechToText() {
         try {
@@ -281,15 +251,6 @@ class VoiceInputViewModel @Inject constructor() : ViewModel() {
 
         } catch (e: CancellationException) {
             // Expected when cancelled
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in speech-to-text", e)
-            _uiState.update { 
-                it.copy(
-                    state = VoiceInputState.ERROR,
-                    errorMessage = "Speech recognition failed"
-                )
-            }
-            _events.emit(VoiceInputEvent.ShowError("Speech recognition failed"))
         }
     }
 
